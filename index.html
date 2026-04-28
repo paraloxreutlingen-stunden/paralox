@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>Paralox Stundenverwaltung</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+
+<!-- OneDrive-Status: Button immer sichtbar (auch ohne JS), wird per onclick aktiviert -->
+<div id="driveStatusWrap" class="drive-status-wrap">
+    <a id="driveStatus" class="drive-status warn" title="OneDrive Sync — wird in 1-2 Sekunden aktiv" href="#" rel="noopener">⟳ OneDrive</a>
+</div>
+
+<!-- Auffälliger Fallback-Banner: bleibt sichtbar bis OneDrive verbunden ist -->
+<div id="driveAlt" class="drive-alt-banner">
+    OneDrive nicht verbunden:
+    <a id="driveAltLink" href="#" rel="noopener">→ jetzt mit OneDrive verbinden</a>
+</div>
+
+<header class="topbar hidden" id="topbar">
+    <div class="brand">Paralox Stunden</div>
+    <nav id="tabs" class="tabs"></nav>
+    <div class="user">
+        <span id="userName"></span>
+        <button class="btn ghost" id="btnLogout">Abmelden</button>
+    </div>
+</header>
+
+<main id="app">
+    <!-- LOGIN -->
+    <section id="view-login" class="view card">
+        <h1>Paralox Stunden</h1>
+        <p class="muted">Bitte anmelden</p>
+        <div id="loginEmptyHint" class="alert info hidden">
+            Es sind noch keine Mitarbeiter auf diesem Gerät hinterlegt.
+            Bitte zuerst auf den Banner oben „<strong>jetzt mit OneDrive verbinden</strong>" tippen, um die Daten aus OneDrive zu laden.
+        </div>
+        <form id="loginForm">
+            <label>Name
+                <select id="loginName" required></select>
+            </label>
+            <label>Passwort
+                <input type="password" id="loginPassword" required autocomplete="current-password">
+            </label>
+            <button class="btn primary" type="submit">Anmelden</button>
+            <div class="alert error hidden" id="loginError"></div>
+        </form>
+
+        <!-- Mitteilungs-Pinnwand (nur sichtbar wenn Text vorhanden) -->
+        <div id="loginPinboard" class="pinboard-box hidden"></div>
+
+        <!-- DSGVO-Hinweis ganz unten, klein -->
+        <div class="dsgvo-notice">
+            Die erfassten Arbeitszeiten werden lokal auf diesem Gerät gespeichert und zur Datensicherung automatisch in Microsoft OneDrive übertragen. Microsoft OneDrive wird von der Microsoft Corporation (USA) betrieben. Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben. Verantwortlich: Beispiel GbR, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen · Owner2 Schmid, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen
+        </div>
+    </section>
+
+    <!-- SCHICHT ERFASSEN -->
+    <section id="view-enter" class="view hidden">
+        <div class="card">
+            <h2>Neue Schicht erfassen</h2>
+            <form id="shiftForm" class="grid" autocomplete="off">
+                <label>Datum
+                    <input type="date" id="sfDate" required>
+                </label>
+                <label>Beginn
+                    <input type="time" id="sfStart" required>
+                </label>
+                <label>Ende
+                    <input type="time" id="sfEnd" required>
+                </label>
+                <label>Raum
+                    <select id="sfRoom" required autocomplete="off"></select>
+                </label>
+                <label class="checkbox">
+                    <input type="checkbox" id="sfDouble">
+                    <span>Doppelüberwachung</span>
+                </label>
+                <label id="sfRoom2Wrap" class="hidden">2. Raum
+                    <select id="sfRoom2" autocomplete="off"></select>
+                </label>
+                <label class="full">Notiz (optional)
+                    <input type="text" id="sfNote" maxlength="200" placeholder="z.B. Zeugnis-Event">
+                </label>
+                <div class="full actions">
+                    <div class="muted" id="sfPreview"></div>
+                    <button class="btn primary" type="submit">Speichern</button>
+                </div>
+            </form>
+        </div>
+    </section>
+
+    <!-- MEINE STUNDEN -->
+    <section id="view-mine" class="view hidden">
+        <div class="card">
+            <div class="row-between">
+                <h2>Meine Stunden</h2>
+                <div class="filters">
+                    <label>Jahr
+                        <select id="mineYear" autocomplete="off"><option value="">Alle</option></select>
+                    </label>
+                    <label>Monat
+                        <select id="mineMonth" autocomplete="off"><option value="">Alle</option></select>
+                    </label>
+                    <button class="btn ghost" id="mineReset">Zurücksetzen</button>
+                </div>
+            </div>
+            <div class="limits" id="mineLimits"></div>
+            <div class="summary" id="mineSummary"></div>
+            <div class="table-wrap">
+                <table class="data" id="mineTable">
+                    <thead>
+                        <tr>
+                            <th>Datum</th><th>Beginn</th><th>Ende</th><th>Dauer</th>
+                            <th>Räume</th><th>Typ</th><th>Verdienst</th><th>Notiz</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- ADMIN: ALLE SCHICHTEN -->
+    <section id="view-shifts" class="view hidden">
+        <div class="card">
+            <div class="row-between">
+                <h2>Alle Schichten</h2>
+                <div class="filters">
+                    <label>Mitarbeiter
+                        <select id="adminEmpFilter"><option value="">Alle</option></select>
+                    </label>
+                    <label>Jahr
+                        <select id="adminYear" autocomplete="off"><option value="">Alle</option></select>
+                    </label>
+                    <label>Monat
+                        <select id="adminMonth" autocomplete="off"><option value="">Alle</option></select>
+                    </label>
+                    <button class="btn ghost" id="adminReset">Zurücksetzen</button>
+                </div>
+            </div>
+            <div class="summary" id="adminSummary"></div>
+            <div class="table-wrap">
+                <table class="data" id="adminTable">
+                    <thead>
+                        <tr>
+                            <th>Datum</th><th>Mitarbeiter</th><th>Beginn</th><th>Ende</th><th>Dauer</th>
+                            <th>Räume</th><th>Typ</th><th>Verdienst</th>
+                            <th>Kosten Owner1</th><th>Kosten Owner2</th>
+                            <th>Notiz</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="row-between">
+                <h3>Export</h3>
+                <div class="filters">
+                    <button class="btn" data-export="csv">CSV</button>
+                    <button class="btn" data-export="ods">ODS</button>
+                    <button class="btn" data-export="pdf">PDF</button>
+                    <button class="btn primary" data-export="minijob" title="Öffnet Monats-Auswahl. 1 PDF, 1 Seite pro Mitarbeiter.">Minijob-PDF…</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ADMIN: MITARBEITER -->
+    <section id="view-employees" class="view hidden">
+        <div class="card">
+            <h2>Mitarbeiter</h2>
+            <div class="table-wrap">
+                <table class="data" id="empTable">
+                    <thead>
+                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <h3 id="empCreateTitle">Neuen Mitarbeiter anlegen</h3>
+            <form id="empForm" class="grid">
+                <label>Name
+                    <input type="text" id="empName" required>
+                </label>
+                <label>Passwort (min. 8 Zeichen, Buchstabe + Ziffer + Sonderzeichen)
+                    <input type="password" id="empPw" required minlength="8" autocomplete="new-password">
+                </label>
+                <label>Arbeitgeber (für Minijob-PDF)
+                    <select id="empAssigned">
+                        <option value="owner1">Beispiel GbR</option>
+                        <option value="owner2">Owner2 Schmid</option>
+                    </select>
+                </label>
+                <label class="checkbox">
+                    <input type="checkbox" id="empAdmin">
+                    <span>Admin-Rechte</span>
+                </label>
+                <label class="checkbox">
+                    <input type="checkbox" id="empAccountant">
+                    <span>Buchhaltung (nur Lesen)</span>
+                </label>
+                <div class="actions">
+                    <button class="btn primary" type="submit">Anlegen</button>
+                </div>
+            </form>
+        </div>
+    </section>
+
+    <!-- ADMIN: EINSTELLUNGEN -->
+    <section id="view-settings" class="view hidden">
+        <div class="card">
+            <h2>Einstellungen</h2>
+            <form id="settingsForm" class="grid">
+                <label>Stundenlohn einfach (EUR)
+                    <input type="number" step="0.01" min="0" id="setSingle" required>
+                </label>
+                <label>Stundenlohn Doppelüberwachung (EUR)
+                    <input type="number" step="0.01" min="0" id="setDouble" required>
+                </label>
+                <div class="actions">
+                    <button class="btn primary" type="submit">Speichern</button>
+                </div>
+            </form>
+            <h3>Räume &amp; Aufteilung</h3>
+            <div class="table-wrap">
+                <table class="data" id="roomsTable">
+                    <thead><tr><th>Kürzel</th><th>Raum</th><th>Owner1</th><th>Owner2</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <p class="muted small">
+                Doppelüberwachung: jeder der beiden Räume trägt 50% zur Kostenaufteilung bei, verteilt gemäß der oben angezeigten Eigentümer-Anteile.
+            </p>
+        </div>
+    </section>
+
+    <!-- ADMIN: PINNWAND -->
+    <section id="view-pinboard" class="view hidden">
+        <div class="card">
+            <h2>Pinnwand – Mitteilung an alle Mitarbeiter</h2>
+            <p class="muted small">
+                Dieser Text erscheint auf der Login-Seite, damit ihn jeder Mitarbeiter vor der Anmeldung sieht.
+                Leer lassen oder löschen entfernt die Mitteilung.
+            </p>
+            <label class="full">Mitteilung
+                <textarea id="pinText" rows="8" placeholder="z.B. Ab nächster Woche gelten neue Öffnungszeiten..."></textarea>
+            </label>
+            <div class="actions" style="justify-content: space-between;">
+                <div class="muted small" id="pinMeta"></div>
+                <div class="filters">
+                    <button class="btn ghost" id="pinClear">Mitteilung löschen</button>
+                    <button class="btn primary" id="pinSave">Speichern</button>
+                </div>
+            </div>
+        </div>
+    </section>
+</main>
+
+<!-- MODALS -->
+<div class="modal hidden" id="modal">
+    <div class="modal-box">
+        <h3 id="modalTitle"></h3>
+        <div id="modalBody"></div>
+        <div class="actions">
+            <button class="btn ghost" id="modalCancel">Abbrechen</button>
+            <button class="btn primary" id="modalOk">OK</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<!-- Externe Libraries für Export -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js" defer></script>
+
+<!-- bcryptjs für Passwort-Hashing -->
+<script src="https://cdn.jsdelivr.net/npm/bcryptjs@2.4.3/dist/bcrypt.min.js" defer></script>
+
+<!-- Microsoft MSAL.js für OneDrive-Sync (PKCE-Redirect, mobile-friendly) -->
+<!-- Lokale Datei statt CDN: keine Laufzeit-Abhängigkeit, im Bundle wird sie inline eingebettet -->
+<script src="vendor/msal-browser.min.js" defer></script>
+
+<!-- Eigene Skripte — Reihenfolge wichtig: config → storage → drive → app -->
+<!-- Versionssuffix erzwingt Neuladen nach Updates (anstelle des Browser-Caches) -->
+<script src="config.js?v=2" defer></script>
+<script src="storage.js?v=2" defer></script>
+<script src="drive.js?v=2" defer></script>
+<script src="app.js?v=2" defer></script>
+</body>
+</html>

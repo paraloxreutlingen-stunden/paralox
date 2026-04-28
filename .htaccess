@@ -1,0 +1,17 @@
+# Paralox Stundenverwaltung - Root Config
+Options -Indexes
+DirectoryIndex index.html index.php
+
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "same-origin"
+</IfModule>
+
+<FilesMatch "\.(json|md|log)$">
+    Require all denied
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>

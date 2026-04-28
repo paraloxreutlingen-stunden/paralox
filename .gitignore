@@ -1,0 +1,19 @@
+# Lokale Daten (PIN-Hashes, Schichten) — gehören nicht ins Repo
+data/
+
+# Dependencies
+node_modules/
+
+# IDE / OS
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs / Tempfiles
+*.log
+*.tmp
+
+# Lokale Test-Server-Outputs
+/tmp/

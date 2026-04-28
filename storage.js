@@ -1,0 +1,132 @@
+/* Paralox Stundenverwaltung - Storage-Schicht (localStorage) */
+(() => {
+    'use strict';
+
+    const KEY = 'paraloxStunden.v1';
+    const SESSION_KEY = 'paraloxStunden.session';
+
+    const DEFAULT_SETTINGS = {
+        wageSingle: 14,
+        wageDouble: 19,
+        abgabenPercent: 31.17,
+        rooms: {
+            FP: { name: 'Raum 1',        owner1: 100, owner2: 0   },
+            SL: { name: 'Raum 3',  owner1: 100, owner2: 0   },
+            BO: { name: 'Raum 4',  owner1: 100, owner2: 0   },
+            VS: { name: 'Raum 2',          owner1: 0,   owner2: 100 },
+            PB: { name: 'Raum 5',        owner1: 0,   owner2: 100 },
+            WS: { name: 'Raum 6',         owner1: 50,  owner2: 50  },
+        },
+        doubleSplit: { main: 50, owner1: 25, owner2: 25 },
+    };
+
+    const DEFAULT_STATE = {
+        employees: [
+            {
+                id: 1,
+                name: 'Owner1',
+                password: 'paralox',
+                isAdmin: true,
+                isAccountant: false,
+                isActive: true,
+                assignedTo: 'owner1',
+                createdAt: new Date().toISOString(),
+            },
+            {
+                id: 2,
+                name: 'Owner2',
+                password: 'paralox',
+                isAdmin: true,
+                isAccountant: false,
+                isActive: true,
+                assignedTo: 'owner2',
+                createdAt: new Date().toISOString(),
+            },
+        ],
+        shifts: [],
+        settings: DEFAULT_SETTINGS,
+        pinboard: { text: '', updatedAt: null, updatedBy: null },
+        adminNotes: '',
+        updatedAt: new Date().toISOString(),
+    };
+
+    function load() {
+        try {
+            const raw = localStorage.getItem(KEY);
+            if (!raw) return seed();
+            const data = JSON.parse(raw);
+            return normalize(data);
+        } catch (e) {
+            console.warn('Storage-Lesefehler, starte neu', e);
+            return seed();
+        }
+    }
+
+    function seed() {
+        const data = JSON.parse(JSON.stringify(DEFAULT_STATE));
+        save(data);
+        return data;
+    }
+
+    // Stellt sicher dass alle Felder vorhanden sind, auch bei alten Datensätzen
+    function normalize(data) {
+        if (!data || typeof data !== 'object') return seed();
+        data.employees = Array.isArray(data.employees) ? data.employees : [];
+        data.shifts    = Array.isArray(data.shifts) ? data.shifts : [];
+        data.settings  = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
+        data.settings.rooms = Object.assign({}, DEFAULT_SETTINGS.rooms, data.settings.rooms || {});
+        data.pinboard  = Object.assign({ text: '', updatedAt: null, updatedBy: null }, data.pinboard || {});
+        if (typeof data.adminNotes !== 'string') data.adminNotes = '';
+        data.updatedAt = data.updatedAt || new Date().toISOString();
+        // Sicherstellen dass jeder Mitarbeiter ein assignedTo hat
+        data.employees.forEach(e => {
+            if (e.assignedTo !== 'owner1' && e.assignedTo !== 'owner2') {
+                e.assignedTo = (e.name && e.name.toLowerCase() === 'owner2') ? 'owner2' : 'owner1';
+            }
+            if (typeof e.password !== 'string') e.password = 'paralox';
+        });
+        return data;
+    }
+
+    function save(data) {
+        data.updatedAt = new Date().toISOString();
+        localStorage.setItem(KEY, JSON.stringify(data));
+        // Event für Drive-Sync
+        window.dispatchEvent(new CustomEvent('paralox:changed', { detail: { updatedAt: data.updatedAt } }));
+    }
+
+    // Ersetzt die komplette Datenbasis — wird vom Drive-Sync verwendet
+    function replace(data) {
+        const norm = normalize(data);
+        localStorage.setItem(KEY, JSON.stringify(norm));
+        return norm;
+    }
+
+    // Session (nur im sessionStorage, NICHT in Drive synchronisiert)
+    function getSession() {
+        try {
+            const raw = sessionStorage.getItem(SESSION_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch { return null; }
+    }
+    function setSession(userId) {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify({ uid: userId, ts: Date.now() }));
+    }
+    function clearSession() {
+        sessionStorage.removeItem(SESSION_KEY);
+    }
+
+    function nextId(items) {
+        let max = 0;
+        items.forEach(i => { if (+i.id > max) max = +i.id; });
+        return max + 1;
+    }
+
+    window.ParaloxStorage = {
+        KEY,
+        DEFAULT_SETTINGS,
+        load, save, replace,
+        getSession, setSession, clearSession,
+        nextId,
+    };
+})();
