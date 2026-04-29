@@ -20,10 +20,12 @@
         rvAnteilProzent: 3.6,
         // Tagessicherung per Mail (Web Share / mailto-Fallback). Aktiviert wird
         // sie über den Settings-Tab; greift beim ersten erfolgreichen
-        // Schicht-Speichern eines neuen Tages.
+        // Schicht-Speichern eines neuen Tages. Empfänger muss vom Admin
+        // eingetragen werden (kein Default), damit nicht versehentlich
+        // an eine fremde Adresse gesichert wird.
         dailyBackup: {
             enabled: false,
-            recipient: 'backup@example.org',
+            recipient: '',
         },
         rooms: {
             FP: { name: 'Raum 1',        owner1: 100, owner2: 0   },
@@ -101,8 +103,8 @@
         if (typeof data.settings.dailyBackup.enabled !== 'boolean') {
             data.settings.dailyBackup.enabled = false;
         }
-        if (typeof data.settings.dailyBackup.recipient !== 'string' || !data.settings.dailyBackup.recipient.trim()) {
-            data.settings.dailyBackup.recipient = DEFAULT_SETTINGS.dailyBackup.recipient;
+        if (typeof data.settings.dailyBackup.recipient !== 'string') {
+            data.settings.dailyBackup.recipient = '';
         }
         data.pinboard  = Object.assign({ text: '', updatedAt: null, updatedBy: null }, data.pinboard || {});
         if (typeof data.adminNotes !== 'string') data.adminNotes = '';

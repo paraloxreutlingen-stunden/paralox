@@ -71,7 +71,7 @@ async function loginAsOwner1(page) {
     await page.waitForTimeout(800);
 }
 
-async function enableBackup(page, recipient = 'backup@example.org') {
+async function enableBackup(page, recipient = 'backup@example.com') {
     // Settings-Tab öffnen
     await page.evaluate(() => {
         Array.from(document.querySelectorAll('#tabs button'))
@@ -112,7 +112,7 @@ async function saveShift(page, date, start, end) {
     {
         const { browser, page } = await newPage('success');
         await loginAsOwner1(page);
-        await enableBackup(page, 'backup@example.org');
+        await enableBackup(page, 'backup@example.com');
 
         const today = new Date().toISOString().slice(0, 10);
         await saveShift(page, today, '10:00', '12:00');
@@ -130,7 +130,7 @@ async function saveShift(page, date, start, end) {
             check('MIME-Type application/json',
                 c.files[0]?.type === 'application/json', c.files[0]?.type);
             check('Share-Text enthält Empfänger',
-                /backup@example\.org/.test(c.text || ''), c.text);
+                /backup@example\.com/.test(c.text || ''), c.text);
         }
 
         const lastDate = await page.evaluate(() =>
