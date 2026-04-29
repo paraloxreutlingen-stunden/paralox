@@ -18,12 +18,14 @@
         // wenn der Mitarbeiter nicht von der RV-Pflicht befreit ist. Stand 2026:
         // 18,6% allgemeiner Beitrag minus 15% AG-Pauschale = 3,6% AN-Anteil.
         rvAnteilProzent: 3.6,
-        // Tagessicherung per Mail (Web Share / mailto-Fallback). Aktiviert
-        // wird sie über den Settings-Tab; greift beim ersten erfolgreichen
-        // Schicht-Speichern eines neuen Tages. Default-Empfänger ist die
-        // dedizierte Backup-Adresse backup@example.org.
+        // Tagessicherung per Mail (Web Share / mailto-Fallback). Greift beim
+        // ersten erfolgreichen Schicht-Speichern eines neuen Tages. Default
+        // aktiv mit der dedizierten Backup-Adresse backup@example.org
+        // — der Owner kann das im Settings-Tab abschalten oder die Adresse
+        // ändern. Bestehende Geräte mit dailyBackup.enabled=false (alter
+        // Default) werden nicht automatisch umgestellt.
         dailyBackup: {
-            enabled: false,
+            enabled: true,
             recipient: 'backup@example.org',
         },
         rooms: {

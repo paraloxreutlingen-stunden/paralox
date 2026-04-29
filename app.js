@@ -606,6 +606,12 @@
         }
         $('#loginPassword').value = '';
         enterApp();
+        // Tagessicherung: erster Login des Tages triggert den Share-Dialog,
+        // damit der Mitarbeiter, der morgens als erstes aufschließt, das
+        // Backup verschickt — nicht erst der nächste Admin. Web Share braucht
+        // User Activation (Login-Submit liefert sie); deshalb hier direkt nach
+        // enterApp() asynchron starten.
+        runDailyBackup({ force: false });
     });
 
     // ---------- Enter App ----------
@@ -695,10 +701,6 @@
         });
         saveData();
         toast('Schicht gespeichert', 'success');
-        // Tagessicherung: beim ersten Save jedes Tages, falls aktiviert.
-        // Fire-and-forget — der Share-Dialog läuft asynchron, das Form
-        // setzt sich darunter schon zurück.
-        runDailyBackup({ force: false });
         $('#sfDate').value = todayISO();
         $('#sfStart').value = '';
         $('#sfEnd').value = '';
