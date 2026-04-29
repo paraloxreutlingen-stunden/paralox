@@ -4,10 +4,13 @@
 
     const KEY = 'paraloxStunden.v1';
     const SESSION_KEY = 'paraloxStunden.session';
-    // Bewusst NICHT in KEY enthalten: das Backup-Datum gehört zum Gerät, nicht
-    // zu den Daten. Sonst würde ein importiertes Backup auf einem neuen Gerät
-    // sofort glauben, es sei heute schon gesichert worden.
+    // Bewusst NICHT in KEY enthalten: die Backup-Marker gehören zum Gerät,
+    // nicht zu den Daten. Sonst würde ein importiertes Backup auf einem neuen
+    // Gerät sofort glauben, es sei heute schon gesichert worden.
     const LAST_BACKUP_KEY = 'paraloxStunden.lastBackup';
+    // Marker für die Monatsabschluss-Mail (YYYY-MM des bereits gesicherten
+    // Vormonats). Liegt ebenfalls separat vom App-State.
+    const LAST_MONTHLY_KEY = 'paraloxStunden.lastMonthlyArchive';
 
     const DEFAULT_SETTINGS = {
         wageSingle: 14,
@@ -19,12 +22,19 @@
         // 18,6% allgemeiner Beitrag minus 15% AG-Pauschale = 3,6% AN-Anteil.
         rvAnteilProzent: 3.6,
         // Tagessicherung per Mail (Web Share / mailto-Fallback). Greift beim
-        // ersten erfolgreichen Schicht-Speichern eines neuen Tages. Default
-        // aktiv mit der dedizierten Backup-Adresse backup@example.org
-        // — der Owner kann das im Settings-Tab abschalten oder die Adresse
-        // ändern. Bestehende Geräte mit dailyBackup.enabled=false (alter
-        // Default) werden nicht automatisch umgestellt.
+        // ersten Login eines neuen Tages. Default aktiv mit der dedizierten
+        // Backup-Adresse backup@example.org — der Owner kann das im
+        // Settings-Tab abschalten oder die Adresse ändern.
         dailyBackup: {
+            enabled: true,
+            recipient: 'backup@example.org',
+        },
+        // Monatsabschluss-Mail beim ersten Login eines neuen Monats:
+        // Minijob-PDF + CSV des Vormonats + JSON-Backup. Wird zum
+        // dauerhaften Archivieren wegen Lohn-Aufbewahrungspflicht (10 Jahre,
+        // § 147 AO) gedacht. Empfänger ist standardmäßig der gleiche wie
+        // dailyBackup.recipient, kann aber separat eingestellt werden.
+        monthlyArchive: {
             enabled: true,
             recipient: 'backup@example.org',
         },
@@ -107,6 +117,14 @@
         if (typeof data.settings.dailyBackup.recipient !== 'string') {
             data.settings.dailyBackup.recipient = DEFAULT_SETTINGS.dailyBackup.recipient;
         }
+        data.settings.monthlyArchive = Object.assign(
+            {}, DEFAULT_SETTINGS.monthlyArchive, data.settings.monthlyArchive || {});
+        if (typeof data.settings.monthlyArchive.enabled !== 'boolean') {
+            data.settings.monthlyArchive.enabled = DEFAULT_SETTINGS.monthlyArchive.enabled;
+        }
+        if (typeof data.settings.monthlyArchive.recipient !== 'string') {
+            data.settings.monthlyArchive.recipient = DEFAULT_SETTINGS.monthlyArchive.recipient;
+        }
         data.pinboard  = Object.assign({ text: '', updatedAt: null, updatedBy: null }, data.pinboard || {});
         if (typeof data.adminNotes !== 'string') data.adminNotes = '';
         data.updatedAt = data.updatedAt || new Date().toISOString();
@@ -158,6 +176,13 @@
         if (isoDate) localStorage.setItem(LAST_BACKUP_KEY, isoDate);
         else localStorage.removeItem(LAST_BACKUP_KEY);
     }
+    function getLastMonthlyArchive() {
+        return localStorage.getItem(LAST_MONTHLY_KEY) || null;
+    }
+    function setLastMonthlyArchive(yyyymm) {
+        if (yyyymm) localStorage.setItem(LAST_MONTHLY_KEY, yyyymm);
+        else localStorage.removeItem(LAST_MONTHLY_KEY);
+    }
 
     function nextId(items) {
         let max = 0;
@@ -171,6 +196,7 @@
         load, save, replace,
         getSession, setSession, clearSession,
         getLastBackupDate, setLastBackupDate,
+        getLastMonthlyArchive, setLastMonthlyArchive,
         nextId,
     };
 })();

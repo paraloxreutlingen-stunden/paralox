@@ -257,12 +257,21 @@
             <form id="backupForm" class="grid">
                 <label class="checkbox">
                     <input type="checkbox" id="setBackupEnabled">
-                    <span>Tagessicherung aktiv</span>
+                    <span>Tagessicherung aktiv (JSON + CSV als Anhang)</span>
                 </label>
-                <label>Empfänger-E-Mail
+                <label>Empfänger-E-Mail (Tagessicherung)
                     <input type="email" id="setBackupRecipient" autocomplete="off"
                         placeholder="z.B. paralox-backup@…">
                     <small class="hint">Empfehlung: eine eigene Backup-Adresse, nicht die private Mail.</small>
+                </label>
+                <label class="checkbox">
+                    <input type="checkbox" id="setMonthlyEnabled">
+                    <span>Monatsabschluss-Mail aktiv (Minijob-PDF + CSV des Vormonats — zur Aufbewahrung wegen Lohn-Pflichten, 10 Jahre)</span>
+                </label>
+                <label>Empfänger-E-Mail (Monatsabschluss)
+                    <input type="email" id="setMonthlyRecipient" autocomplete="off"
+                        placeholder="z.B. lohn@…">
+                    <small class="hint">Kann dieselbe Adresse wie die Tagessicherung sein.</small>
                 </label>
                 <div class="full muted small" id="backupStatus">Letzte Sicherung: noch keine.</div>
                 <div class="actions">

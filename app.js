@@ -590,19 +590,36 @@
         const el = $('#dsgvoNotice');
         if (!el) return;
         const cfg = settings()?.dailyBackup || {};
-        if (!cfg.enabled) {
+        const mcfg = settings()?.monthlyArchive || {};
+        const dailyOn = !!cfg.enabled;
+        const monthlyOn = !!mcfg.enabled;
+
+        if (!dailyOn && !monthlyOn) {
             el.innerHTML =
                 '<p>Die erfassten Arbeitszeiten werden ausschließlich lokal auf diesem Gerät gespeichert. Es findet keine Übertragung an externe Dienste statt. Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>' +
                 `<p>Verantwortlich: ${escapeHtml(VERANTWORTLICH)}</p>`;
             return;
         }
+
         const recipient = (cfg.recipient || '').trim();
-        el.innerHTML =
-            '<p>Die erfassten Arbeitszeiten werden lokal auf diesem Gerät gespeichert.</p>' +
-            '<p><strong>Tagessicherung per E-Mail (aktiv):</strong> Einmal pro Tag wird beim ersten Login eine Backup-Datei mit allen erfassten Daten (Mitarbeiternamen, Arbeitszeiten, Lohn-Einstellungen) als Anhang einer E-Mail an ' +
-            `<strong>${escapeHtml(recipient || '— nicht konfiguriert —')}</strong>` +
-            ' versendet. Auftragsverarbeiter ist 1&1 Mail &amp; Media GmbH (GMX, Deutschland) sowie der Mail-Anbieter des Endgeräts. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an der Datensicherung gegen Geräteverlust). Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>' +
-            `<p>Verantwortlich: ${escapeHtml(VERANTWORTLICH)}</p>`;
+        const mrecipient = (mcfg.recipient || '').trim();
+        const sameRecipient = recipient && mrecipient && recipient === mrecipient;
+
+        let html = '<p>Die erfassten Arbeitszeiten werden lokal auf diesem Gerät gespeichert.</p>';
+        if (dailyOn) {
+            html += '<p><strong>Tagessicherung per E-Mail (aktiv):</strong> Einmal pro Tag wird beim ersten Login eine Backup-Datei (JSON + CSV) mit allen erfassten Daten (Mitarbeiternamen, Arbeitszeiten, Lohn-Einstellungen) als Anhang einer E-Mail an ' +
+                `<strong>${escapeHtml(recipient || '— nicht konfiguriert —')}</strong>` +
+                ' versendet.</p>';
+        }
+        if (monthlyOn) {
+            html += '<p><strong>Monatsabschluss per E-Mail (aktiv):</strong> Einmal pro Monat wird beim ersten Login eines neuen Monats eine Mail mit Minijob-PDF (Lohnabrechnungs-Übersicht pro Mitarbeiter), CSV-Auswertung des Vormonats und Backup-JSON ' +
+                (sameRecipient ? 'an dieselbe Adresse versendet' :
+                    `an <strong>${escapeHtml(mrecipient || '— nicht konfiguriert —')}</strong> versendet`) +
+                '. Diese Mail dient der Aufbewahrungspflicht für Lohnunterlagen (10 Jahre, § 147 AO).</p>';
+        }
+        html += '<p>Auftragsverarbeiter ist 1&amp;1 Mail &amp; Media GmbH (GMX, Deutschland) sowie der Mail-Anbieter des Endgeräts. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an der Datensicherung gegen Geräteverlust und an der gesetzlichen Aufbewahrungspflicht). Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>';
+        html += `<p>Verantwortlich: ${escapeHtml(VERANTWORTLICH)}</p>`;
+        el.innerHTML = html;
     }
 
     function renderLoginPinboard() {
@@ -632,12 +649,15 @@
         }
         $('#loginPassword').value = '';
         enterApp();
-        // Tagessicherung: erster Login des Tages triggert den Share-Dialog,
-        // damit der Mitarbeiter, der morgens als erstes aufschließt, das
-        // Backup verschickt — nicht erst der nächste Admin. Web Share braucht
-        // User Activation (Login-Submit liefert sie); deshalb hier direkt nach
-        // enterApp() asynchron starten.
-        runDailyBackup({ force: false });
+        // Sicherungen beim ersten Login eines neuen Tages bzw. Monats:
+        // Tagessicherung zuerst, danach Monatsabschluss (sequentiell, sonst
+        // würden zwei Share-Dialoge konkurrieren). Web Share braucht User
+        // Activation — der Login-Submit liefert sie. Asynchron, damit das
+        // Form schon umgeschaltet hat.
+        (async () => {
+            await runDailyBackup({ force: false });
+            await runMonthlyArchive({ force: false });
+        })();
     });
 
     // ---------- Enter App ----------
@@ -1140,8 +1160,11 @@
 
     // ---------- Export ----------
 
-    function exportRows() {
-        const list = currentAdminFiltered();
+    /* Pure: nimmt eine Schicht-Liste, baut die Rows für CSV/ODS/PDF.
+     * Wird vom UI-Export (mit currentAdminFiltered) UND von der automatischen
+     * Tagessicherung / Monatsabschluss-Mail (mit eigener Filter-Liste)
+     * benutzt. */
+    function exportRowsFromList(list) {
         const pctStr = String(ABGABEN_PCT).replace('.', ',');
         const rvPctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
         const rows = [[
@@ -1153,8 +1176,7 @@
             'Kosten Owner1','Kosten Owner2','Notiz'
         ]];
         const tot = { hours: 0, amount: 0, sBase: 0, bBase: 0 };
-        // Pro-Mitarbeiter-Aggregat für die Zusammenfassung am Ende
-        const byEmp = new Map(); // empId -> { brutto, rvAnteil, auszahlung, befreit }
+        const byEmp = new Map();
         list.forEach(s => {
             const w = wageFor(s);
             const c = splitCost(s);
@@ -1220,6 +1242,21 @@
         return { rows, list };
     }
 
+    function exportRows() {
+        return exportRowsFromList(currentAdminFiltered());
+    }
+
+    /* CSV-Blob aus rows-Array. Plain text, keine Lib nötig — funktioniert
+     * auch in der automatischen Tagessicherung sofort beim Login. */
+    function rowsToCsvBlob(rows) {
+        const csv = rows.map(r => r.map(cell => {
+            const s = String(cell ?? '');
+            return /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        }).join(';')).join('\r\n');
+        // BOM, damit Excel UTF-8 erkennt
+        return new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    }
+
     function exportFilenameBase() {
         const y = readPeriodYear('#adminYear');
         const m = readPeriodMonth('#adminMonth');
@@ -1248,12 +1285,7 @@
 
     function exportCSV() {
         const { rows } = exportRows();
-        const csv = rows.map(r => r.map(cell => {
-            const s = String(cell ?? '');
-            return /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-        }).join(';')).join('\r\n');
-        const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-        downloadBlob(blob, exportFilenameBase() + '.csv');
+        downloadBlob(rowsToCsvBlob(rows), exportFilenameBase() + '.csv');
     }
 
     function exportODS() {
@@ -1349,9 +1381,22 @@
             return;
         }
 
+        const blob = buildMinijobPdfBlob(targetEmps, monthLabel);
+        if (!blob) {
+            toast('PDF konnte nicht erzeugt werden.', 'error');
+            return;
+        }
+        downloadBlob(blob, `stundenlisten_minijob_${yearStr}_${monthStr}.pdf`);
+    }
+
+    /* Pure: erzeugt Minijob-PDF aus einer vorbereiteten Mitarbeiter-Liste mit
+     * Schicht-Stand. targetEmps = [{ emp, list }, …]. Wird vom UI-Export und
+     * von der automatischen Monatsabschluss-Mail benutzt. Returns Blob, oder
+     * null wenn jspdf nicht geladen ist. */
+    function buildMinijobPdfBlob(targetEmps, monthLabel) {
+        if (typeof window.jspdf === 'undefined') return null;
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-
         targetEmps.forEach((entry, idx) => {
             if (idx > 0) doc.addPage();
             const { emp, list } = entry;
@@ -1424,8 +1469,7 @@
             doc.text(`Seite ${idx + 1} von ${targetEmps.length}`, 540, 800, { align: 'right' });
             doc.setTextColor(0);
         });
-
-        doc.save(`stundenlisten_minijob_${yearStr}_${monthStr}.pdf`);
+        return doc.output('blob');
     }
 
     $$('[data-export]').forEach(b => b.addEventListener('click', () => {
@@ -1635,6 +1679,9 @@
         const cfg = settings().dailyBackup || {};
         $('#setBackupEnabled').checked = !!cfg.enabled;
         $('#setBackupRecipient').value = cfg.recipient || '';
+        const mcfg = settings().monthlyArchive || {};
+        $('#setMonthlyEnabled').checked = !!mcfg.enabled;
+        $('#setMonthlyRecipient').value = mcfg.recipient || '';
         renderBackupStatus();
         const admin = isAdmin();
         $$('#settingsForm input, #settingsForm button').forEach(el => el.disabled = !admin);
@@ -1702,45 +1749,36 @@
 
         backupInProgress = true;
         try {
-            const blob = buildBackupBlob();
-            const filename = backupFilename();
+            // 1. JSON für Wiederherstellung (das eigentliche Backup)
+            const jsonBlob = buildBackupBlob();
+            const jsonName = backupFilename();
+            const files = [{ blob: jsonBlob, name: jsonName, type: 'application/json' }];
 
-            if (typeof File === 'function' && navigator.canShare) {
-                const file = new File([blob], filename, { type: 'application/json' });
-                if (navigator.canShare({ files: [file] })) {
-                    try {
-                        await navigator.share({
-                            files: [file],
-                            title: 'Paralox Tagessicherung ' + today,
-                            text: recipient
-                                ? `Bitte als Anhang an ${recipient} senden.`
-                                : 'Backup-Datei zum Versand.',
-                        });
-                        window.ParaloxStorage.setLastBackupDate(today);
-                        renderBackupStatus();
-                        toast('Tagessicherung gesendet', 'success');
-                        return true;
-                    } catch (e) {
-                        // AbortError = User hat den Dialog geschlossen → leise weiter
-                        if (e && e.name === 'AbortError') return false;
-                        console.warn('Web Share fehlgeschlagen, nutze mailto-Fallback', e);
-                    }
-                }
+            // 2. CSV mit allen aktuellen Schichten — menschenlesbar
+            try {
+                const allShifts = [...shifts()].sort((a, b) =>
+                    a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+                const { rows } = exportRowsFromList(allShifts);
+                const csvBlob = rowsToCsvBlob(rows);
+                files.push({
+                    blob: csvBlob,
+                    name: `paralox-stunden-${today}.csv`,
+                    type: 'text/csv',
+                });
+            } catch (e) {
+                console.warn('CSV-Anhang konnte nicht erzeugt werden', e);
             }
 
-            // Fallback: Datei herunterladen + Mail-Client öffnen
-            downloadBlob(blob, filename);
-            const subject = `Paralox Tagessicherung ${today}`;
-            const body = `Heute heruntergeladene Backup-Datei "${filename}" bitte als Anhang einfügen und absenden.\n\n— Paralox Stundenverwaltung`;
-            const mailto = `mailto:${encodeURIComponent(recipient)}` +
-                `?subject=${encodeURIComponent(subject)}` +
-                `&body=${encodeURIComponent(body)}`;
-            // mailto öffnet das Standard-Mail-Programm; Datei muss manuell angehängt werden
-            window.location.href = mailto;
-            window.ParaloxStorage.setLastBackupDate(today);
-            renderBackupStatus();
-            toast('Backup heruntergeladen — bitte als Anhang an die Mail einfügen', 'info');
-            return true;
+            return await sendBackupViaShare({
+                files, recipient, today,
+                subject: `Paralox Tagessicherung ${today}`,
+                title: 'Paralox Tagessicherung ' + today,
+                onSuccess: () => {
+                    window.ParaloxStorage.setLastBackupDate(today);
+                    renderBackupStatus();
+                    toast('Tagessicherung gesendet', 'success');
+                },
+            });
         } catch (e) {
             console.warn('Tagessicherung fehlgeschlagen', e);
             toast('Sicherung fehlgeschlagen: ' + (e.message || e), 'error');
@@ -1750,16 +1788,156 @@
         }
     }
 
+    /* Gemeinsame Web-Share-Routine für Tages- und Monatsabschluss-Mails.
+     * files = [{ blob, name, type }, …]. Bei Erfolg → onSuccess(). Bei
+     * Web-Share-Abort → false (kein Marker setzen). Bei fehlender API →
+     * mailto-Fallback (Dateien werden heruntergeladen). */
+    async function sendBackupViaShare({ files, recipient, today, subject, title, onSuccess }) {
+        if (!files.length) return false;
+        if (typeof File === 'function' && navigator.canShare) {
+            const fileObjs = files.map(f => new File([f.blob], f.name, { type: f.type }));
+            if (navigator.canShare({ files: fileObjs })) {
+                try {
+                    await navigator.share({
+                        files: fileObjs,
+                        title,
+                        text: recipient
+                            ? `Bitte als Anhang an ${recipient} senden.`
+                            : 'Backup-Dateien zum Versand.',
+                    });
+                    onSuccess();
+                    return true;
+                } catch (e) {
+                    if (e && e.name === 'AbortError') return false;
+                    console.warn('Web Share fehlgeschlagen, nutze mailto-Fallback', e);
+                }
+            }
+        }
+        // Fallback: alle Dateien einzeln herunterladen, dann Mail-Client öffnen
+        files.forEach(f => downloadBlob(f.blob, f.name));
+        const fileList = files.map(f => `"${f.name}"`).join(', ');
+        const body = `Heute heruntergeladene Backup-Dateien (${fileList}) bitte als Anhang einfügen und absenden.\n\n— Paralox Stundenverwaltung`;
+        const mailto = `mailto:${encodeURIComponent(recipient)}` +
+            `?subject=${encodeURIComponent(subject)}` +
+            `&body=${encodeURIComponent(body)}`;
+        window.location.href = mailto;
+        onSuccess();
+        toast('Backup-Dateien heruntergeladen — bitte als Anhang an die Mail einfügen', 'info');
+        return true;
+    }
+
     function renderBackupStatus() {
         const el = $('#backupStatus');
         if (!el) return;
         const last = window.ParaloxStorage.getLastBackupDate();
-        if (!last) {
-            el.textContent = 'Letzte Sicherung: noch keine.';
-            return;
+        const lastMonthly = window.ParaloxStorage.getLastMonthlyArchive();
+        const dailyTxt = !last
+            ? 'noch keine'
+            : last === todayLocalISO() ? 'heute ✓' : fmtDateDE(last);
+        const monthlyTxt = lastMonthly
+            ? `${MONTH_NAMES[Number(lastMonthly.split('-')[1]) - 1]} ${lastMonthly.split('-')[0]}`
+            : 'noch keiner';
+        el.textContent = `Letzte Tagessicherung: ${dailyTxt} · Letzter gesicherter Monatsabschluss: ${monthlyTxt}`;
+    }
+
+    /* Bestimmt YYYY-MM des Vormonats relativ zu heute (lokale Zeit). */
+    function previousMonthYYYYMM() {
+        const d = new Date();
+        d.setDate(1);
+        d.setMonth(d.getMonth() - 1);
+        const y = d.getFullYear();
+        const m = pad(d.getMonth() + 1);
+        return `${y}-${m}`;
+    }
+
+    /* Monatsabschluss-Mail: beim ersten Login eines neuen Monats wird der
+     * Vormonat archiviert — Minijob-PDF (alle Mitarbeiter) + CSV-Auswertung
+     * + JSON-Backup. Marker LAST_MONTHLY_KEY hält fest, welcher Vormonat
+     * zuletzt gesichert wurde, damit's nicht doppelt feuert. */
+    let monthlyInProgress = false;
+    async function runMonthlyArchive({ force = false, monthOverride = null } = {}) {
+        if (monthlyInProgress) return false;
+        const cfg = settings().monthlyArchive || {};
+        if (!force && !cfg.enabled) return false;
+        const targetMonth = monthOverride || previousMonthYYYYMM();
+        if (!force && window.ParaloxStorage.getLastMonthlyArchive() === targetMonth) {
+            return false;
         }
-        if (last === todayLocalISO()) el.textContent = 'Letzte Sicherung: heute ✓';
-        else el.textContent = 'Letzte Sicherung: ' + fmtDateDE(last);
+        const recipient = (cfg.recipient || '').trim();
+
+        const monthShifts = shifts()
+            .filter(s => s.date.startsWith(targetMonth))
+            .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+        if (monthShifts.length === 0 && !force) {
+            // Kein Monatsabschluss nötig wenn der Vormonat keine Schichten hatte —
+            // Marker trotzdem setzen, damit's nicht jeden Tag erneut versucht wird.
+            window.ParaloxStorage.setLastMonthlyArchive(targetMonth);
+            return false;
+        }
+
+        monthlyInProgress = true;
+        try {
+            const [yearStr, monthStr] = targetMonth.split('-');
+            const monthLabel = `${MONTH_NAMES[Number(monthStr) - 1]} ${yearStr}`;
+
+            // 1. JSON (vollständiger State zur Wiederherstellung)
+            const files = [{
+                blob: buildBackupBlob(),
+                name: `paralox-backup-${todayLocalISO()}.json`,
+                type: 'application/json',
+            }];
+
+            // 2. CSV des Vormonats — menschenlesbar, prüfungstauglich
+            try {
+                const { rows } = exportRowsFromList(monthShifts);
+                files.push({
+                    blob: rowsToCsvBlob(rows),
+                    name: `paralox-stunden_${targetMonth}.csv`,
+                    type: 'text/csv',
+                });
+            } catch (e) {
+                console.warn('Monatsabschluss-CSV fehlgeschlagen', e);
+            }
+
+            // 3. Minijob-PDF (eine Seite pro Mitarbeiter) — wenn jspdf da
+            try {
+                const targetEmps = [...employees()]
+                    .map(e => ({
+                        emp: e,
+                        list: monthShifts.filter(s => s.employeeId === e.id),
+                    }))
+                    .filter(x => x.list.length > 0)
+                    .sort((a, b) => a.emp.name.localeCompare(b.emp.name, 'de'));
+                if (targetEmps.length > 0) {
+                    const pdfBlob = buildMinijobPdfBlob(targetEmps, monthLabel);
+                    if (pdfBlob) {
+                        files.push({
+                            blob: pdfBlob,
+                            name: `stundenlisten_minijob_${yearStr}_${monthStr}.pdf`,
+                            type: 'application/pdf',
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn('Minijob-PDF für Monatsabschluss fehlgeschlagen', e);
+            }
+
+            return await sendBackupViaShare({
+                files, recipient, today: todayLocalISO(),
+                subject: `Paralox Monatsabschluss ${monthLabel}`,
+                title: 'Paralox Monatsabschluss ' + monthLabel,
+                onSuccess: () => {
+                    window.ParaloxStorage.setLastMonthlyArchive(targetMonth);
+                    renderBackupStatus();
+                    toast(`Monatsabschluss ${monthLabel} gesendet`, 'success');
+                },
+            });
+        } catch (e) {
+            console.warn('Monatsabschluss fehlgeschlagen', e);
+            return false;
+        } finally {
+            monthlyInProgress = false;
+        }
     }
 
     $('#settingsForm').addEventListener('submit', (ev) => {
@@ -1779,12 +1957,22 @@
         cfg.enabled = $('#setBackupEnabled').checked;
         const r = $('#setBackupRecipient').value.trim();
         if (cfg.enabled && !r) {
-            toast('Bitte eine Empfänger-Adresse eintragen.', 'error');
+            toast('Bitte eine Empfänger-Adresse für die Tagessicherung eintragen.', 'error');
             return;
         }
         cfg.recipient = r || cfg.recipient;
+
+        const mcfg = settings().monthlyArchive;
+        mcfg.enabled = $('#setMonthlyEnabled').checked;
+        const mr = $('#setMonthlyRecipient').value.trim();
+        if (mcfg.enabled && !mr) {
+            toast('Bitte eine Empfänger-Adresse für den Monatsabschluss eintragen.', 'error');
+            return;
+        }
+        mcfg.recipient = mr || mcfg.recipient;
+
         saveData();
-        toast('Tagessicherung gespeichert', 'success');
+        toast('Sicherungs-Einstellungen gespeichert', 'success');
     });
 
     $('#backupNow').addEventListener('click', async () => {

@@ -51,8 +51,8 @@ async function readNotice(page) {
         await browser.close();
     }
 
-    // -------- 2. Sicherung deaktiviert → kurzer Text --------
-    console.log('\n=== Sicherung deaktiviert → kurzer Lokal-Text ===');
+    // -------- 2. Beide Sicherungen deaktiviert → kurzer Text --------
+    console.log('\n=== Beide Sicherungen deaktiviert → kurzer Lokal-Text ===');
     {
         const browser = await chromium.launch({ executablePath: CHROME, headless: true });
         const ctx = await browser.newContext();
@@ -62,6 +62,7 @@ async function readNotice(page) {
         await page.evaluate(() => {
             const data = JSON.parse(localStorage.getItem('paraloxStunden.v1'));
             data.settings.dailyBackup.enabled = false;
+            data.settings.monthlyArchive.enabled = false;
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
         });
         await page.reload({ waitUntil: 'networkidle' });
@@ -80,7 +81,7 @@ async function readNotice(page) {
         await browser.close();
     }
 
-    // -------- 3. Owner ändert Empfänger → Text passt sich an --------
+    // -------- 3. Owner ändert beide Empfänger → Text passt sich an --------
     console.log('\n=== Geänderter Empfänger erscheint im Hinweis ===');
     {
         const browser = await chromium.launch({ executablePath: CHROME, headless: true });
@@ -92,6 +93,8 @@ async function readNotice(page) {
             const data = JSON.parse(localStorage.getItem('paraloxStunden.v1'));
             data.settings.dailyBackup.enabled = true;
             data.settings.dailyBackup.recipient = 'andere-adresse@firma.de';
+            data.settings.monthlyArchive.enabled = true;
+            data.settings.monthlyArchive.recipient = 'andere-adresse@firma.de';
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
         });
         await page.reload({ waitUntil: 'networkidle' });
@@ -101,6 +104,23 @@ async function readNotice(page) {
             n.text.slice(0, 100));
         check('Hinweis nennt NICHT mehr die alte Adresse',
             !/backup@example\.org/.test(n.text));
+    }
+
+    // -------- 4. Monatsabschluss erwähnt 10 Jahre Aufbewahrung --------
+    console.log('\n=== Monatsabschluss-Hinweis erwähnt 10-Jahre-Aufbewahrung ===');
+    {
+        const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+        const ctx = await browser.newContext();
+        const page = await ctx.newPage();
+        await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
+        await page.waitForTimeout(800);
+        const n = await readNotice(page);
+        check('Hinweis erwähnt Monatsabschluss',
+            /Monatsabschluss per E-Mail/.test(n.text), n.text.slice(0, 80));
+        check('Hinweis erwähnt 10-Jahres-Aufbewahrungspflicht',
+            /10 Jahre|§ 147 AO/.test(n.text));
+        check('Hinweis erwähnt Minijob-PDF',
+            /Minijob-PDF/.test(n.text));
         await browser.close();
     }
 
