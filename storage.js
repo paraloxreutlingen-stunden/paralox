@@ -9,6 +9,11 @@
         wageSingle: 14,
         wageDouble: 19,
         abgabenPercent: 31.17,
+        // Arbeitnehmer-Anteil zur gesetzlichen Rentenversicherung in Prozent vom
+        // Brutto. Wird vom Lohn abgezogen und an die Minijob-Zentrale abgeführt,
+        // wenn der Mitarbeiter nicht von der RV-Pflicht befreit ist. Stand 2026:
+        // 18,6% allgemeiner Beitrag minus 15% AG-Pauschale = 3,6% AN-Anteil.
+        rvAnteilProzent: 3.6,
         rooms: {
             FP: { name: 'Raum 1',        owner1: 100, owner2: 0   },
             SL: { name: 'Raum 3',  owner1: 100, owner2: 0   },
@@ -29,6 +34,7 @@
                 isAdmin: true,
                 isAccountant: false,
                 isActive: true,
+                rvBefreit: false,
                 assignedTo: 'owner1',
                 createdAt: new Date().toISOString(),
             },
@@ -39,6 +45,7 @@
                 isAdmin: true,
                 isAccountant: false,
                 isActive: true,
+                rvBefreit: false,
                 assignedTo: 'owner2',
                 createdAt: new Date().toISOString(),
             },
@@ -75,6 +82,9 @@
         data.shifts    = Array.isArray(data.shifts) ? data.shifts : [];
         data.settings  = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
         data.settings.rooms = Object.assign({}, DEFAULT_SETTINGS.rooms, data.settings.rooms || {});
+        if (typeof data.settings.rvAnteilProzent !== 'number' || isNaN(data.settings.rvAnteilProzent)) {
+            data.settings.rvAnteilProzent = DEFAULT_SETTINGS.rvAnteilProzent;
+        }
         data.pinboard  = Object.assign({ text: '', updatedAt: null, updatedBy: null }, data.pinboard || {});
         if (typeof data.adminNotes !== 'string') data.adminNotes = '';
         data.updatedAt = data.updatedAt || new Date().toISOString();
@@ -84,6 +94,9 @@
                 e.assignedTo = (e.name && e.name.toLowerCase() === 'owner2') ? 'owner2' : 'owner1';
             }
             if (typeof e.password !== 'string') e.password = 'paralox';
+            // Migration: bestehende Mitarbeiter sind standardmäßig RV-pflichtig
+            // (rvBefreit=false). Befreiung muss aktiv per Häkchen gesetzt werden.
+            if (typeof e.rvBefreit !== 'boolean') e.rvBefreit = false;
         });
         return data;
     }

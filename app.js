@@ -927,6 +927,23 @@
         const e = employees().find(x => x.id === id);
         return (e && e.assignedTo) || 'owner1';
     }
+    function empRvBefreit(id) {
+        const e = employees().find(x => x.id === id);
+        return !!(e && e.rvBefreit);
+    }
+
+    /* Berechnet Brutto, RV-Anteil und Auszahlung für einen gegebenen Bruttolohn.
+     * Wenn der Mitarbeiter von der RV-Pflicht befreit ist, ist rvAnteil = 0 und
+     * auszahlung = brutto. Sonst werden settings.rvAnteilProzent vom Brutto
+     * abgezogen (Stand 2026: 3,6 %). Centgenau gerundet. */
+    function payoutInfo(brutto, rvBefreit) {
+        const round = n => Math.round(n * 100) / 100;
+        const b = round(brutto);
+        if (rvBefreit) return { brutto: b, rvAnteil: 0, auszahlung: b };
+        const pct = Number(settings().rvAnteilProzent) || 0;
+        const rvAnteil = round(b * pct / 100);
+        return { brutto: b, rvAnteil, auszahlung: round(b - rvAnteil) };
+    }
 
     function renderAdminShifts() {
         fillYearMonthSelects('#adminYear', '#adminMonth');
@@ -981,7 +998,24 @@
         if (!list.length) {
             tbody.innerHTML = `<tr><td colspan="12" class="muted" style="text-align:center;padding:2rem">Keine Einträge</td></tr>`;
         }
-        $('#adminSummary').innerHTML = adminSummaryHtml(list.length, totalMin, totalAmt, agg);
+        let summaryHtmlOut = adminSummaryHtml(list.length, totalMin, totalAmt, agg);
+        // Wenn ein einzelner Mitarbeiter gefiltert ist: Brutto / RV-Anteil /
+        // Auszahlung anzeigen — wichtig für die Lohnabrechnung.
+        const filteredEmpId = $('#adminEmpFilter').value;
+        if (filteredEmpId && list.length) {
+            const empId = Number(filteredEmpId);
+            const befreit = empRvBefreit(empId);
+            const p = payoutInfo(totalAmt, befreit);
+            const pctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
+            const rvLabel = befreit
+                ? `RV-Anteil (befreit)`
+                : `RV-Anteil (${pctStr}%)`;
+            summaryHtmlOut +=
+                `<div class="stat"><div class="label">Brutto ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.brutto)}</div></div>` +
+                `<div class="stat"><div class="label">${rvLabel}</div><div class="value">${befreit ? '–' : '− ' + fmtEUR(p.rvAnteil)}</div></div>` +
+                `<div class="stat"><div class="label">Auszahlung an ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.auszahlung)}</div></div>`;
+        }
+        $('#adminSummary').innerHTML = summaryHtmlOut;
 
         tbody.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => startEditRow(Number(b.dataset.edit)));
         tbody.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
@@ -1077,13 +1111,18 @@
     function exportRows() {
         const list = currentAdminFiltered();
         const pctStr = String(ABGABEN_PCT).replace('.', ',');
+        const rvPctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
         const rows = [[
             'Datum','Mitarbeiter','Beginn','Ende','Dauer (Std)',
             'Raum 1','Raum 2','Raumnamen',
-            'Typ','Stundenlohn','Verdienst (EUR)',
+            'Typ','Stundenlohn','Brutto (EUR)',
+            `RV-Anteil AN (${rvPctStr}%, EUR)`,
+            'Auszahlung (EUR)',
             'Kosten Owner1','Kosten Owner2','Notiz'
         ]];
         const tot = { hours: 0, amount: 0, sBase: 0, bBase: 0 };
+        // Pro-Mitarbeiter-Aggregat für die Zusammenfassung am Ende
+        const byEmp = new Map(); // empId -> { brutto, rvAnteil, auszahlung, befreit }
         list.forEach(s => {
             const w = wageFor(s);
             const c = splitCost(s);
@@ -1095,12 +1134,22 @@
             const sec = secondRoomOf(s);
             const r1name = settings().rooms[s.room]?.name || '';
             const r2name = sec ? (settings().rooms[sec]?.name || '') : '';
+            const befreit = empRvBefreit(s.employeeId);
+            const p = payoutInfo(w.amount, befreit);
+            const agg = byEmp.get(s.employeeId) || { brutto: 0, rvAnteil: 0, auszahlung: 0, befreit };
+            agg.brutto    += p.brutto;
+            agg.rvAnteil  += p.rvAnteil;
+            agg.auszahlung+= p.auszahlung;
+            agg.befreit = befreit;
+            byEmp.set(s.employeeId, agg);
             rows.push([
                 s.date, empName(s.employeeId), s.startTime, s.endTime,
                 hours.toFixed(2), s.room, sec || '',
                 sec ? `${r1name} + ${r2name}` : r1name,
                 s.isDouble ? 'Doppel' : 'Einfach',
                 w.rate.toFixed(2), w.amount.toFixed(2),
+                befreit ? '0,00' : p.rvAnteil.toFixed(2),
+                p.auszahlung.toFixed(2),
                 c.owner1Base.toFixed(2), c.owner2Base.toFixed(2),
                 s.note || ''
             ]);
@@ -1112,7 +1161,22 @@
         rows.push(['ZUSAMMENFASSUNG']);
         rows.push(['Einträge', list.length]);
         rows.push(['Stunden gesamt', tot.hours.toFixed(2)]);
-        rows.push(['Verdienst Mitarbeiter (EUR)', tot.amount.toFixed(2)]);
+        rows.push(['Brutto Mitarbeiter gesamt (EUR)', tot.amount.toFixed(2)]);
+        if (byEmp.size > 0) {
+            rows.push([]);
+            rows.push(['LOHN-AUSZAHLUNG PRO MITARBEITER']);
+            rows.push(['Mitarbeiter', 'Brutto (EUR)', `RV-Anteil AN (${rvPctStr}%, EUR)`, 'Auszahlung (EUR)']);
+            [...byEmp.entries()]
+                .sort((a, b) => empName(a[0]).localeCompare(empName(b[0]), 'de'))
+                .forEach(([empId, a]) => {
+                    rows.push([
+                        empName(empId) + (a.befreit ? ' (RV-befreit)' : ''),
+                        a.brutto.toFixed(2),
+                        a.befreit ? '0,00' : a.rvAnteil.toFixed(2),
+                        a.auszahlung.toFixed(2),
+                    ]);
+                });
+        }
         rows.push([]);
         rows.push(['Kosten Owner1 (EUR)', tot.sBase.toFixed(2)]);
         rows.push([`Abgaben Owner1 (${pctStr}%)`, sAbg.toFixed(2)]);
@@ -1303,9 +1367,24 @@
             const yAfter = doc.lastAutoTable.finalY + 20;
             doc.setFontSize(11);
             doc.setFont(undefined, 'bold');
-            doc.text(`Summe:`, 40, yAfter);
+            doc.text(`Brutto-Lohn:`, 40, yAfter);
             doc.text(`${(totalMin / 60).toFixed(2).replace('.', ',')} Std`, 300, yAfter, { align: 'right' });
             doc.text(`${fmtEUR(totalAmt)}`, 540, yAfter, { align: 'right' });
+            doc.setFont(undefined, 'normal');
+
+            // RV-Anteil Arbeitnehmer + Auszahlung anzeigen
+            const p = payoutInfo(totalAmt, !!emp.rvBefreit);
+            const rvPctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
+            doc.setFontSize(11);
+            const rvLabel = emp.rvBefreit
+                ? `RV-Anteil AN (von der RV-Pflicht befreit):`
+                : `RV-Anteil AN (${rvPctStr}%):`;
+            doc.text(rvLabel, 40, yAfter + 18);
+            doc.text(emp.rvBefreit ? '–' : `− ${fmtEUR(p.rvAnteil)}`, 540, yAfter + 18, { align: 'right' });
+
+            doc.setFont(undefined, 'bold');
+            doc.text(`Auszahlung an Mitarbeiter:`, 40, yAfter + 38);
+            doc.text(fmtEUR(p.auszahlung), 540, yAfter + 38, { align: 'right' });
             doc.setFont(undefined, 'normal');
 
             doc.setFontSize(9); doc.setTextColor(120);
@@ -1342,11 +1421,15 @@
             const arbeitgeberLabel = e.assignedTo === 'owner2'
                 ? 'Owner2 Schmid'
                 : 'Beispiel GbR';
+            const rvBadge = e.rvBefreit
+                ? '<span class="badge muted" title="Befreit — kein RV-Anteil-Abzug">RV-befreit</span>'
+                : '<span class="badge" title="RV-pflichtig — AN-Anteil wird vom Lohn abgezogen">RV-pflichtig</span>';
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td>${escapeHtml(e.name)}</td>
                 <td>${roleBadge}</td>
                 <td><span class="badge">${escapeHtml(arbeitgeberLabel)}</span></td>
+                <td>${rvBadge}</td>
                 <td>${e.isActive ? '<span class="badge ok">Aktiv</span>' : '<span class="badge muted">Inaktiv</span>'}</td>
                 <td class="muted small">${e.createdAt ? fmtDateDE(e.createdAt.slice(0, 10)) : ''}</td>
                 <td>${admin ? `
@@ -1355,6 +1438,7 @@
                     <button class="btn small" data-emp-assign="${e.id}">Arbeitgeber wechseln</button>
                     <button class="btn small" data-emp-admin="${e.id}">${e.isAdmin ? 'Admin entziehen' : 'Admin geben'}</button>
                     <button class="btn small" data-emp-acc="${e.id}">${e.isAccountant ? 'Buchhaltung entziehen' : 'Buchhaltung geben'}</button>
+                    <button class="btn small" data-emp-rv="${e.id}">${e.rvBefreit ? 'RV-Befreiung entziehen' : 'RV-Befreiung geben'}</button>
                     <button class="btn small ${e.isActive ? 'danger' : ''}" data-emp-active="${e.id}">${e.isActive ? 'Deaktivieren' : 'Aktivieren'}</button>
                     <button class="btn small danger" data-emp-delete="${e.id}" title="Löscht den Mitarbeiter dauerhaft. Nur möglich, wenn keine Schichten im laufenden Monat existieren.">Löschen</button>
                 ` : '<span class="muted small">–</span>'}</td>
@@ -1420,6 +1504,13 @@
             saveData();
             renderEmployees();
             toast('Gespeichert', 'success');
+        });
+        tbody.querySelectorAll('[data-emp-rv]').forEach(b => b.onclick = () => {
+            const emp = employees().find(x => x.id === Number(b.dataset.empRv));
+            emp.rvBefreit = !emp.rvBefreit;
+            saveData();
+            renderEmployees();
+            toast(emp.rvBefreit ? 'Mitarbeiter ist RV-befreit' : 'Mitarbeiter ist RV-pflichtig', 'success');
         });
         tbody.querySelectorAll('[data-emp-active]').forEach(b => b.onclick = async () => {
             const emp = employees().find(x => x.id === Number(b.dataset.empActive));
@@ -1487,6 +1578,7 @@
             password: hashed,
             isAdmin: $('#empAdmin').checked,
             isAccountant: $('#empAccountant').checked,
+            rvBefreit: $('#empRvBefreit').checked,
             isActive: true,
             assignedTo: $('#empAssigned').value,
             createdAt: new Date().toISOString(),
@@ -1496,6 +1588,7 @@
         $('#empPw').value = '';
         $('#empAdmin').checked = false;
         $('#empAccountant').checked = false;
+        $('#empRvBefreit').checked = false;
         $('#empAssigned').value = 'owner1';
         toast('Mitarbeiter angelegt', 'success');
         renderEmployees();
@@ -1506,6 +1599,7 @@
     function renderSettings() {
         $('#setSingle').value = settings().wageSingle;
         $('#setDouble').value = settings().wageDouble;
+        $('#setRvAnteil').value = settings().rvAnteilProzent;
         const admin = isAdmin();
         $$('#settingsForm input, #settingsForm button').forEach(el => el.disabled = !admin);
         $('#settingsForm').title = admin ? '' : 'Nur Admins können Einstellungen ändern.';
@@ -1527,6 +1621,8 @@
         ev.preventDefault();
         settings().wageSingle = Math.max(0, Number($('#setSingle').value) || 0);
         settings().wageDouble = Math.max(0, Number($('#setDouble').value) || 0);
+        const rv = Number($('#setRvAnteil').value);
+        settings().rvAnteilProzent = (isFinite(rv) && rv >= 0 && rv <= 20) ? rv : 3.6;
         saveData();
         renderPreview();
         toast('Einstellungen gespeichert', 'success');

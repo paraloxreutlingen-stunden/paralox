@@ -178,7 +178,7 @@
             <div class="table-wrap">
                 <table class="data" id="empTable">
                     <thead>
-                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
+                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>RV</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
                     </thead>
                     <tbody></tbody>
                 </table>
@@ -205,6 +205,12 @@
                     <input type="checkbox" id="empAccountant">
                     <span>Buchhaltung (nur Lesen)</span>
                 </label>
+                <label class="checkbox">
+                    <input type="checkbox" id="empRvBefreit">
+                    <span>Von der Rentenversicherungspflicht befreit
+                        <small class="hint">(sonst wird der RV-Anteil vom Lohn abgezogen)</small>
+                    </span>
+                </label>
                 <div class="actions">
                     <button class="btn primary" type="submit">Anlegen</button>
                 </div>
@@ -222,6 +228,10 @@
                 </label>
                 <label>Stundenlohn Doppelüberwachung (EUR)
                     <input type="number" step="0.01" min="0" id="setDouble" required>
+                </label>
+                <label>Rentenversicherungs-Anteil Arbeitnehmer (%)
+                    <input type="number" step="0.01" min="0" max="20" id="setRvAnteil" required>
+                    <small class="hint">Wird vom Bruttolohn abgezogen, wenn der Mitarbeiter nicht von der RV-Pflicht befreit ist. Stand 2026: 3,6 %</small>
                 </label>
                 <div class="actions">
                     <button class="btn primary" type="submit">Speichern</button>
