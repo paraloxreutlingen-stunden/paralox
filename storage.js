@@ -18,14 +18,13 @@
         // wenn der Mitarbeiter nicht von der RV-Pflicht befreit ist. Stand 2026:
         // 18,6% allgemeiner Beitrag minus 15% AG-Pauschale = 3,6% AN-Anteil.
         rvAnteilProzent: 3.6,
-        // Tagessicherung per Mail (Web Share / mailto-Fallback). Aktiviert wird
-        // sie über den Settings-Tab; greift beim ersten erfolgreichen
-        // Schicht-Speichern eines neuen Tages. Empfänger muss vom Admin
-        // eingetragen werden (kein Default), damit nicht versehentlich
-        // an eine fremde Adresse gesichert wird.
+        // Tagessicherung per Mail (Web Share / mailto-Fallback). Aktiviert
+        // wird sie über den Settings-Tab; greift beim ersten erfolgreichen
+        // Schicht-Speichern eines neuen Tages. Default-Empfänger ist die
+        // dedizierte Backup-Adresse backup@example.org.
         dailyBackup: {
             enabled: false,
-            recipient: '',
+            recipient: 'backup@example.org',
         },
         rooms: {
             FP: { name: 'Raum 1',        owner1: 100, owner2: 0   },
@@ -104,7 +103,13 @@
             data.settings.dailyBackup.enabled = false;
         }
         if (typeof data.settings.dailyBackup.recipient !== 'string') {
-            data.settings.dailyBackup.recipient = '';
+            data.settings.dailyBackup.recipient = DEFAULT_SETTINGS.dailyBackup.recipient;
+        }
+        // Migration: alter hartcodierter Default (Privatadresse) wird einmalig
+        // auf die dedizierte Backup-Adresse umgestellt — sofern der User noch
+        // nicht selbst etwas anderes eingetragen hat.
+        if (data.settings.dailyBackup.recipient === 'backup@example.org') {
+            data.settings.dailyBackup.recipient = DEFAULT_SETTINGS.dailyBackup.recipient;
         }
         data.pinboard  = Object.assign({ text: '', updatedAt: null, updatedBy: null }, data.pinboard || {});
         if (typeof data.adminNotes !== 'string') data.adminNotes = '';
