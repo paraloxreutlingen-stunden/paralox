@@ -2,8 +2,10 @@
  * Nutzung:  node build-bundle.js
  *
  * - CSS aus style.css wird als <style> inline.
- * - JS aus vendor/msal-browser.min.js, config.js, storage.js, drive.js und
- *   app.js werden als <script> inline eingebettet.
+ * - JS aus config.js, storage.js und app.js werden als <script> inline eingebettet.
+ * - OneDrive-Sync ist vorübergehend deaktiviert (App läuft rein lokal). Zum
+ *   Reaktivieren: drive.js + vendor/msal-browser.min.js wieder einlesen und
+ *   ins Bundle aufnehmen (siehe DRIVE_DISABLED-Marker unten).
  * - Andere CDN-Skripte (xlsx, jspdf, bcryptjs) bleiben als externe <script src>
  *   bestehen, da sie nur bei spezifischen Aktionen benötigt werden.
  */
@@ -15,11 +17,11 @@ const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
 
 const indexHtml = read('index.html');
 const styleCss  = read('style.css');
-const msalJs    = read('vendor/msal-browser.min.js');
 const cfgJs     = read('config.js');
 const storageJs = read('storage.js');
-const driveJs   = read('drive.js');
 const appJs     = read('app.js');
+// DRIVE_DISABLED: const msalJs = read('vendor/msal-browser.min.js');
+// DRIVE_DISABLED: const driveJs = read('drive.js');
 
 let out = indexHtml;
 
@@ -33,23 +35,21 @@ out = out.replace(
     lit(`<style>\n${styleCss}\n</style>`)
 );
 
-// 2) MSAL: <script src="vendor/msal-browser.min.js" defer></script> -> inline
-const msalTag = /<script\s+src="vendor\/msal-browser\.min\.js"\s+defer><\/script>/i;
-if (!msalTag.test(out)) {
-    console.error('Konnte den MSAL-<script>-Tag in index.html nicht finden.');
-    process.exit(1);
-}
+// 2) MSAL-Kommentar-Block (deaktivierter OneDrive-Sync) komplett entfernen,
+//    damit das Bundle keine OneDrive-Reste enthält. Der Block ist eindeutig
+//    durch DRIVE_DISABLED_SCRIPTS markiert.
 out = out.replace(
-    msalTag,
-    lit(`<script>\n/* @azure/msal-browser (inline aus vendor/msal-browser.min.js) */\n${msalJs}\n</script>`)
+    /<!--\s*DRIVE_DISABLED_SCRIPTS[\s\S]*?-->\s*<!--\s*<script\s+src="vendor\/msal-browser[^>]*>\s*<\/script>\s*-->\s*/i,
+    lit('')
 );
 
-// 3) Lokale eigene Skripte: config -> storage -> drive -> app
+// 3) Lokale eigene Skripte: config -> storage -> app
+//    (drive.js ist im index.html als HTML-Kommentar markiert; der Regex matcht
+//    inkl. dieses Kommentars bis zum app.js-Tag.)
 const localScriptBlock = /<!--\s*Eigene Skripte[\s\S]*?<script\s+src="app\.js[^"]*"\s+defer><\/script>/i;
-const inlineBlock = `<!-- Eingebettete Skripte: config -> storage -> drive -> app -->
+const inlineBlock = `<!-- Eingebettete Skripte: config -> storage -> app (drive deaktiviert) -->
 <script>\n/* config.js */\n${cfgJs}\n</script>
 <script>\n/* storage.js */\n${storageJs}\n</script>
-<script>\n/* drive.js */\n${driveJs}\n</script>
 <script>\n/* app.js */\n${appJs}\n</script>`;
 
 if (!localScriptBlock.test(out)) {

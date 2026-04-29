@@ -12,13 +12,13 @@
 </head>
 <body>
 
-<!-- OneDrive-Status: Button immer sichtbar (auch ohne JS), wird per onclick aktiviert -->
-<div id="driveStatusWrap" class="drive-status-wrap">
-    <a id="driveStatus" class="drive-status warn" title="OneDrive Sync — wird in 1-2 Sekunden aktiv" href="#" rel="noopener">⟳ OneDrive</a>
+<!-- OneDrive-Sync vorübergehend deaktiviert (App läuft rein lokal aus localStorage).
+     Markup bleibt im DOM (hidden), damit drive.js bei späterer Reaktivierung
+     dieselben IDs wieder findet. -->
+<div id="driveStatusWrap" class="drive-status-wrap hidden" hidden>
+    <a id="driveStatus" class="drive-status warn" href="#" rel="noopener">⟳ OneDrive</a>
 </div>
-
-<!-- Auffälliger Fallback-Banner: bleibt sichtbar bis OneDrive verbunden ist -->
-<div id="driveAlt" class="drive-alt-banner">
+<div id="driveAlt" class="drive-alt-banner hidden" hidden>
     OneDrive nicht verbunden:
     <a id="driveAltLink" href="#" rel="noopener">→ jetzt mit OneDrive verbinden</a>
 </div>
@@ -39,7 +39,7 @@
         <p class="muted">Bitte anmelden</p>
         <div id="loginEmptyHint" class="alert info hidden">
             Es sind noch keine Mitarbeiter auf diesem Gerät hinterlegt.
-            Bitte zuerst auf den Banner oben „<strong>jetzt mit OneDrive verbinden</strong>" tippen, um die Daten aus OneDrive zu laden.
+            Bitte zuerst über die Verwaltung neue Mitarbeiter anlegen.
         </div>
         <form id="loginForm">
             <label>Name
@@ -57,7 +57,7 @@
 
         <!-- DSGVO-Hinweis ganz unten, klein -->
         <div class="dsgvo-notice">
-            Die erfassten Arbeitszeiten werden lokal auf diesem Gerät gespeichert und zur Datensicherung automatisch in Microsoft OneDrive übertragen. Microsoft OneDrive wird von der Microsoft Corporation (USA) betrieben. Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben. Verantwortlich: Beispiel GbR, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen · Owner2 Schmid, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen
+            Die erfassten Arbeitszeiten werden ausschließlich lokal auf diesem Gerät gespeichert. Es findet keine Übertragung an externe Dienste statt. Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben. Verantwortlich: Beispiel GbR, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen · Owner2 Schmid, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen
         </div>
     </section>
 
@@ -284,15 +284,16 @@
 <!-- bcryptjs für Passwort-Hashing -->
 <script src="https://cdn.jsdelivr.net/npm/bcryptjs@2.4.3/dist/bcrypt.min.js" defer></script>
 
-<!-- Microsoft MSAL.js für OneDrive-Sync (PKCE-Redirect, mobile-friendly) -->
-<!-- Lokale Datei statt CDN: keine Laufzeit-Abhängigkeit, im Bundle wird sie inline eingebettet -->
-<script src="vendor/msal-browser.min.js" defer></script>
+<!-- DRIVE_DISABLED_SCRIPTS — vom Bundler entfernt. Zum Reaktivieren: die nächsten zwei
+     Script-Tags wieder einkommentieren und den hidden-Flag im OneDrive-Markup oben
+     entfernen. drive.js und vendor/msal-browser.min.js bleiben unverändert auf Disk. -->
+<!-- <script src="vendor/msal-browser.min.js" defer></script> -->
 
-<!-- Eigene Skripte — Reihenfolge wichtig: config → storage → drive → app -->
+<!-- Eigene Skripte — Reihenfolge wichtig: config → storage → app -->
 <!-- Versionssuffix erzwingt Neuladen nach Updates (anstelle des Browser-Caches) -->
 <script src="config.js?v=2" defer></script>
 <script src="storage.js?v=2" defer></script>
-<script src="drive.js?v=2" defer></script>
+<!-- <script src="drive.js?v=2" defer></script> -->
 <script src="app.js?v=2" defer></script>
 </body>
 </html>
