@@ -14,7 +14,7 @@
     const state = {
         user: null,
         data: null, // Ganze DB aus localStorage
-        activeTab: 'enter',
+        activeTab: null, // wird beim ersten buildTabs() rollenabhängig gesetzt
     };
 
     // ---------- Utilities ----------
@@ -407,10 +407,10 @@
     function buildTabs() {
         const nav = $('#tabs');
         nav.innerHTML = '';
-        if (!isViewer() || isAdmin()) {
-            nav.appendChild(tab('enter', 'Neue Schicht'));
-            nav.appendChild(tab('mine',  'Meine Stunden'));
-        }
+        // Eigene Schichten eintragen darf jeder eingeloggte User — Buchhaltungs-
+        // Mitarbeiter arbeiten oft selbst mit und brauchen den Tab ebenfalls.
+        nav.appendChild(tab('enter', 'Neue Schicht'));
+        nav.appendChild(tab('mine',  'Meine Stunden'));
         if (isViewer()) {
             nav.appendChild(tab('shifts',    'Alle Schichten'));
             nav.appendChild(tab('employees', 'Mitarbeiter'));
@@ -419,6 +419,8 @@
         if (isAdmin()) {
             nav.appendChild(tab('pinboard', 'Pinnwand'));
         }
+        // Buchhalter (Viewer ohne Admin) landen weiterhin auf "Alle Schichten" —
+        // ihr Hauptzweck ist die Auswertung; "Neue Schicht" ist nur Zusatz.
         const def = (!isViewer() || isAdmin()) ? 'enter' : 'shifts';
         const available = $$('.tabs button').some(b => b.dataset.tab === state.activeTab);
         switchTab(state.activeTab && available ? state.activeTab : def);
