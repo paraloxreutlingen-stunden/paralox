@@ -54,12 +54,6 @@
 
         <!-- Mitteilungs-Pinnwand (nur sichtbar wenn Text vorhanden) -->
         <div id="loginPinboard" class="pinboard-box hidden"></div>
-
-        <!-- DSGVO-Hinweis ganz unten, klein -->
-        <div class="dsgvo-notice" id="dsgvoNotice">
-            <!-- wird dynamisch von renderDsgvoNotice() befüllt — Inhalt hängt
-                 davon ab, ob die Tagessicherung per Mail aktiv ist. -->
-        </div>
     </section>
 
     <!-- SCHICHT ERFASSEN -->
@@ -312,6 +306,19 @@
         <div class="actions">
             <button class="btn ghost" id="modalCancel">Abbrechen</button>
             <button class="btn primary" id="modalOk">OK</button>
+        </div>
+    </div>
+</div>
+
+<!-- Einmaliger DSGVO-Hinweis: erscheint nur beim allerersten Besuch und muss
+     aktiv bestätigt werden. Bestätigung wird im localStorage festgehalten
+     (paraloxStunden.dsgvoAccepted) und unterdrückt das Popup danach. -->
+<div class="modal hidden" id="dsgvoConsentModal">
+    <div class="modal-box dsgvo-consent">
+        <h3>Datenschutzhinweis</h3>
+        <div id="dsgvoNotice"></div>
+        <div class="actions">
+            <button class="btn primary" id="dsgvoConsentBtn" type="button">Verstanden, weiter</button>
         </div>
     </div>
 </div>

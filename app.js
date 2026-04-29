@@ -577,14 +577,27 @@
             });
         }
         renderLoginPinboard();
-        renderDsgvoNotice();
+        maybeShowDsgvoConsent();
     }
 
-    /* DSGVO-Hinweis wechselt je nachdem, ob die Tagessicherung per Mail
-     * eingeschaltet ist. Mit aktiver Sicherung wird der Empfänger und der
-     * Auftragsverarbeiter (GMX) genannt — ohne Sicherung gilt die kurze
-     * Lokal-Speicherungs-Variante. Aufgerufen beim Initial-Render und
-     * wenn der Owner die Einstellung ändert. */
+    /* DSGVO-Hinweis wird einmalig beim allerersten Besuch als Pflicht-Modal
+     * gezeigt. Nach Bestätigung speichert localStorage den Marker
+     * paraloxStunden.dsgvoAccepted und das Popup erscheint nie wieder.
+     * Inhalt wird vorher dynamisch passend zu den aktiven Sicherungen
+     * (Tages- / Monatsabschluss) befüllt. */
+    function maybeShowDsgvoConsent() {
+        const modal = $('#dsgvoConsentModal');
+        if (!modal) return;
+        if (window.ParaloxStorage.getDsgvoAccepted()) {
+            modal.classList.add('hidden');
+            return;
+        }
+        renderDsgvoNotice();
+        modal.classList.remove('hidden');
+    }
+
+    /* Befüllt #dsgvoNotice (im Consent-Modal) mit dem auf die aktuellen
+     * Sicherungs-Einstellungen abgestimmten Text. */
     const VERANTWORTLICH = 'Beispiel GbR, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen · Owner2 Schmid, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen';
     function renderDsgvoNotice() {
         const el = $('#dsgvoNotice');
@@ -692,6 +705,12 @@
     }
 
     $('#btnLogout').addEventListener('click', doLogout);
+
+    // DSGVO-Consent-Modal: einmal bestätigen, dann Marker setzen und schließen.
+    $('#dsgvoConsentBtn')?.addEventListener('click', () => {
+        window.ParaloxStorage.setDsgvoAccepted(new Date().toISOString());
+        $('#dsgvoConsentModal').classList.add('hidden');
+    });
 
     // ---------- Shift Form ----------
 

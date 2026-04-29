@@ -23,8 +23,16 @@ async function measure(viewport, withPinboard, label) {
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
     await page.waitForTimeout(1000);
 
+    // DSGVO-Consent vorab als bestätigt markieren — sonst würde das Pflicht-
+    // Popup beim Erstbesuch über dem Login-Formular liegen und die Layout-
+    // Messung verfälschen. Hier interessiert nur das Login-Layout selbst.
+    await page.evaluate(() => {
+        localStorage.setItem('paraloxStunden.dsgvoAccepted',
+            new Date().toISOString());
+    });
+
     if (withPinboard) {
-        // Pinnwand-Mitteilung direkt im localStorage setzen, dann reload
+        // Pinnwand-Mitteilung direkt im localStorage setzen
         await page.evaluate(() => {
             const raw = localStorage.getItem('paraloxStunden.v1');
             if (!raw) return;
@@ -36,9 +44,10 @@ async function measure(viewport, withPinboard, label) {
             };
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
         });
-        await page.reload({ waitUntil: 'networkidle', timeout: 10000 });
-        await page.waitForTimeout(800);
     }
+    // Reload, damit Marker + Pinnwand-Daten beim Login-Render greifen
+    await page.reload({ waitUntil: 'networkidle', timeout: 10000 });
+    await page.waitForTimeout(800);
 
     const m = await page.evaluate(() => {
         const view = document.getElementById('view-login');
@@ -70,16 +79,13 @@ async function measure(viewport, withPinboard, label) {
     check('Login-Submit-Button im Viewport (kein Scrollen nötig zum Login)',
         m.btnBottom !== null && m.btnBottom <= m.viewport.h,
         `btnBottom=${m.btnBottom?.toFixed(0)}, viewportH=${m.viewport.h}`);
-    // Pinnwand+DSGVO dürfen den Viewport um wenige Zeilen überragen — wir prüfen
-    // dass die WICHTIGE Aktion (Login) ohne Scrollen erreichbar ist.
-    // Auf Tablets soll auch Pinnwand+DSGVO weitgehend ohne Scrollen sichtbar
-    // sein. Auf Phones (< 720px) ist der DSGVO-Hinweis lang genug, dass etwas
-    // Scrollen unvermeidbar ist — der Login-Button (oben geprüft) bleibt aber
-    // immer im Viewport.
+    // Auf Tablets soll der gesamte Login-View (inkl. Pinnwand) ohne Scrollen
+    // sichtbar sein. Da der DSGVO-Hinweis seit dem Consent-Popup nicht mehr
+    // unter dem Form klebt, sollte das Layout sehr knapp passen.
     if (withPinboard && viewport.width >= 720) {
         const overflow = m.scrollHeight - m.clientHeight;
-        check('Tablet: Pinnwand+DSGVO ragen ≤ 100px über',
-            overflow <= 100, `overflow=${overflow}px`);
+        check('Tablet: Login-View passt ohne Scrollen (≤ 50px Toleranz)',
+            overflow <= 50, `overflow=${overflow}px`);
     }
 
     if (withPinboard && viewport.width >= 720) {

@@ -168,8 +168,7 @@ h3 {
             "head    head"
             "intro   intro"
             "hint    hint"
-            "form    pin"
-            "dsgvo   dsgvo";
+            "form    pin";
         column-gap: 1.5rem;
         row-gap: 0;
         align-items: start;
@@ -179,7 +178,6 @@ h3 {
     #view-login:has(#loginPinboard:not(.hidden)) > #loginEmptyHint { grid-area: hint; }
     #view-login:has(#loginPinboard:not(.hidden)) > #loginForm     { grid-area: form; }
     #view-login:has(#loginPinboard:not(.hidden)) > #loginPinboard { grid-area: pin; margin-top: 0; }
-    #view-login:has(#loginPinboard:not(.hidden)) > .dsgvo-notice  { grid-area: dsgvo; margin-top: 1.5rem; }
 }
 
 #view-login h1 {
@@ -625,16 +623,20 @@ tr.editing td {
     font-style: italic;
 }
 
-/* Login: DSGVO-Hinweis (ganz unten, klein) */
-.dsgvo-notice {
-    margin-top: 2rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border);
-    font-size: .72rem;
-    line-height: 1.45;
-    color: var(--muted);
-    text-align: justify;
+/* DSGVO-Consent-Modal: einmaliger Hinweis beim ersten Besuch.
+   Etwas breiter als das Standard-Modal — der Text ist lang. */
+.modal-box.dsgvo-consent {
+    max-width: 640px;
 }
+.modal-box.dsgvo-consent #dsgvoNotice {
+    font-size: .9rem;
+    line-height: 1.5;
+    color: var(--muted);
+    max-height: 60vh;
+    overflow-y: auto;
+}
+.modal-box.dsgvo-consent #dsgvoNotice p { margin: 0 0 .75rem; }
+.modal-box.dsgvo-consent #dsgvoNotice p:last-child { margin-bottom: 0; }
 
 /* Pinnwand (Admin-Tab): Textarea etwas höher */
 #pinText {
@@ -770,12 +772,6 @@ tr.editing td {
 
         <!-- Mitteilungs-Pinnwand (nur sichtbar wenn Text vorhanden) -->
         <div id="loginPinboard" class="pinboard-box hidden"></div>
-
-        <!-- DSGVO-Hinweis ganz unten, klein -->
-        <div class="dsgvo-notice" id="dsgvoNotice">
-            <!-- wird dynamisch von renderDsgvoNotice() befüllt — Inhalt hängt
-                 davon ab, ob die Tagessicherung per Mail aktiv ist. -->
-        </div>
     </section>
 
     <!-- SCHICHT ERFASSEN -->
@@ -1032,6 +1028,19 @@ tr.editing td {
     </div>
 </div>
 
+<!-- Einmaliger DSGVO-Hinweis: erscheint nur beim allerersten Besuch und muss
+     aktiv bestätigt werden. Bestätigung wird im localStorage festgehalten
+     (paraloxStunden.dsgvoAccepted) und unterdrückt das Popup danach. -->
+<div class="modal hidden" id="dsgvoConsentModal">
+    <div class="modal-box dsgvo-consent">
+        <h3>Datenschutzhinweis</h3>
+        <div id="dsgvoNotice"></div>
+        <div class="actions">
+            <button class="btn primary" id="dsgvoConsentBtn" type="button">Verstanden, weiter</button>
+        </div>
+    </div>
+</div>
+
 <div class="toast-wrap" id="toasts"></div>
 
 <!-- Externe Libraries für Export -->
@@ -1090,6 +1099,10 @@ window.ParaloxConfig = {
     // Marker für die Monatsabschluss-Mail (YYYY-MM des bereits gesicherten
     // Vormonats). Liegt ebenfalls separat vom App-State.
     const LAST_MONTHLY_KEY = 'paraloxStunden.lastMonthlyArchive';
+    // Marker für die einmalige DSGVO-Zustimmung (ISO-Zeitpunkt). Pro Gerät,
+    // damit ein importiertes Backup auf einem neuen Gerät erneut die
+    // Zustimmung verlangt.
+    const DSGVO_ACCEPTED_KEY = 'paraloxStunden.dsgvoAccepted';
 
     const DEFAULT_SETTINGS = {
         wageSingle: 14,
@@ -1262,6 +1275,13 @@ window.ParaloxConfig = {
         if (yyyymm) localStorage.setItem(LAST_MONTHLY_KEY, yyyymm);
         else localStorage.removeItem(LAST_MONTHLY_KEY);
     }
+    function getDsgvoAccepted() {
+        return localStorage.getItem(DSGVO_ACCEPTED_KEY) || null;
+    }
+    function setDsgvoAccepted(iso) {
+        if (iso) localStorage.setItem(DSGVO_ACCEPTED_KEY, iso);
+        else localStorage.removeItem(DSGVO_ACCEPTED_KEY);
+    }
 
     function nextId(items) {
         let max = 0;
@@ -1276,6 +1296,7 @@ window.ParaloxConfig = {
         getSession, setSession, clearSession,
         getLastBackupDate, setLastBackupDate,
         getLastMonthlyArchive, setLastMonthlyArchive,
+        getDsgvoAccepted, setDsgvoAccepted,
         nextId,
     };
 })();
@@ -1862,14 +1883,27 @@ window.ParaloxConfig = {
             });
         }
         renderLoginPinboard();
-        renderDsgvoNotice();
+        maybeShowDsgvoConsent();
     }
 
-    /* DSGVO-Hinweis wechselt je nachdem, ob die Tagessicherung per Mail
-     * eingeschaltet ist. Mit aktiver Sicherung wird der Empfänger und der
-     * Auftragsverarbeiter (GMX) genannt — ohne Sicherung gilt die kurze
-     * Lokal-Speicherungs-Variante. Aufgerufen beim Initial-Render und
-     * wenn der Owner die Einstellung ändert. */
+    /* DSGVO-Hinweis wird einmalig beim allerersten Besuch als Pflicht-Modal
+     * gezeigt. Nach Bestätigung speichert localStorage den Marker
+     * paraloxStunden.dsgvoAccepted und das Popup erscheint nie wieder.
+     * Inhalt wird vorher dynamisch passend zu den aktiven Sicherungen
+     * (Tages- / Monatsabschluss) befüllt. */
+    function maybeShowDsgvoConsent() {
+        const modal = $('#dsgvoConsentModal');
+        if (!modal) return;
+        if (window.ParaloxStorage.getDsgvoAccepted()) {
+            modal.classList.add('hidden');
+            return;
+        }
+        renderDsgvoNotice();
+        modal.classList.remove('hidden');
+    }
+
+    /* Befüllt #dsgvoNotice (im Consent-Modal) mit dem auf die aktuellen
+     * Sicherungs-Einstellungen abgestimmten Text. */
     const VERANTWORTLICH = 'Beispiel GbR, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen · Owner2 Schmid, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen';
     function renderDsgvoNotice() {
         const el = $('#dsgvoNotice');
@@ -1977,6 +2011,12 @@ window.ParaloxConfig = {
     }
 
     $('#btnLogout').addEventListener('click', doLogout);
+
+    // DSGVO-Consent-Modal: einmal bestätigen, dann Marker setzen und schließen.
+    $('#dsgvoConsentBtn')?.addEventListener('click', () => {
+        window.ParaloxStorage.setDsgvoAccepted(new Date().toISOString());
+        $('#dsgvoConsentModal').classList.add('hidden');
+    });
 
     // ---------- Shift Form ----------
 

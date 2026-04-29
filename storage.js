@@ -11,6 +11,10 @@
     // Marker für die Monatsabschluss-Mail (YYYY-MM des bereits gesicherten
     // Vormonats). Liegt ebenfalls separat vom App-State.
     const LAST_MONTHLY_KEY = 'paraloxStunden.lastMonthlyArchive';
+    // Marker für die einmalige DSGVO-Zustimmung (ISO-Zeitpunkt). Pro Gerät,
+    // damit ein importiertes Backup auf einem neuen Gerät erneut die
+    // Zustimmung verlangt.
+    const DSGVO_ACCEPTED_KEY = 'paraloxStunden.dsgvoAccepted';
 
     const DEFAULT_SETTINGS = {
         wageSingle: 14,
@@ -183,6 +187,13 @@
         if (yyyymm) localStorage.setItem(LAST_MONTHLY_KEY, yyyymm);
         else localStorage.removeItem(LAST_MONTHLY_KEY);
     }
+    function getDsgvoAccepted() {
+        return localStorage.getItem(DSGVO_ACCEPTED_KEY) || null;
+    }
+    function setDsgvoAccepted(iso) {
+        if (iso) localStorage.setItem(DSGVO_ACCEPTED_KEY, iso);
+        else localStorage.removeItem(DSGVO_ACCEPTED_KEY);
+    }
 
     function nextId(items) {
         let max = 0;
@@ -197,6 +208,7 @@
         getSession, setSession, clearSession,
         getLastBackupDate, setLastBackupDate,
         getLastMonthlyArchive, setLastMonthlyArchive,
+        getDsgvoAccepted, setDsgvoAccepted,
         nextId,
     };
 })();

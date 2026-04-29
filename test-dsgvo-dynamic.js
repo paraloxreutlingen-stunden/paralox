@@ -1,10 +1,12 @@
-/* Test: DSGVO-Hinweis im Login-View ist dynamisch.
- *  - dailyBackup.enabled=false → kurzer Lokal-Speicherungs-Text
- *  - dailyBackup.enabled=true  → erweiterter Text mit Empfänger,
- *                                Auftragsverarbeiter (GMX, 1&1),
- *                                Rechtsgrundlage (Art. 6 Abs. 1 lit. f).
- *  - Nach Settings-Änderung + Logout/Reload zeigt der Login-View den
- *    aktualisierten Text.
+/* Test: DSGVO-Hinweis erscheint als Consent-Popup beim ALLERERSTEN Besuch
+ * und ist dynamisch:
+ *  - dailyBackup.enabled=false + monthlyArchive.enabled=false →
+ *    kurzer Lokal-Speicherungs-Text
+ *  - dailyBackup.enabled=true → erweiterter Text mit Empfänger,
+ *    Auftragsverarbeiter (GMX, 1&1), Rechtsgrundlage (Art. 6 Abs. 1 lit. f).
+ *  - Nach Klick auf "Verstanden, weiter" wird der Marker
+ *    paraloxStunden.dsgvoAccepted gesetzt und das Popup nie wieder gezeigt.
+ *  - Bei einem Re-Load mit gesetztem Marker bleibt das Popup verborgen.
  */
 'use strict';
 const { chromium } = require('playwright-core');
@@ -20,8 +22,10 @@ function check(label, cond, detail) {
 
 async function readNotice(page) {
     return page.evaluate(() => {
+        const modal = document.getElementById('dsgvoConsentModal');
         const el = document.getElementById('dsgvoNotice');
         return {
+            modalVisible: !!modal && !modal.classList.contains('hidden'),
             text: el ? el.textContent.replace(/\s+/g, ' ').trim() : null,
             html: el ? el.innerHTML : null,
         };
@@ -38,6 +42,8 @@ async function readNotice(page) {
         await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
         await page.waitForTimeout(800);
         const n = await readNotice(page);
+        check('Consent-Popup ist beim allerersten Besuch sichtbar',
+            n.modalVisible === true);
         check('Hinweis enthält "Tagessicherung per E-Mail (aktiv)"',
             /Tagessicherung per E-Mail \(aktiv\)/.test(n.text), n.text.slice(0, 80));
         check('Hinweis enthält backup@example.org',
@@ -48,6 +54,37 @@ async function readNotice(page) {
             /Art\.\s*6\s*Abs\.\s*1\s*lit\.\s*f/.test(n.text));
         check('Hinweis enthält Verantwortlichen (Beispiel…)',
             /Beispiel GbR/.test(n.text));
+        await browser.close();
+    }
+
+    // -------- 1b. Consent-Klick setzt Marker und schließt Popup --------
+    console.log('\n=== Bestätigung: Marker gesetzt, Popup verschwindet, kommt nicht wieder ===');
+    {
+        const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+        const ctx = await browser.newContext();
+        const page = await ctx.newPage();
+        await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
+        await page.waitForTimeout(800);
+        let n = await readNotice(page);
+        check('Popup vor Klick sichtbar', n.modalVisible === true);
+
+        await page.click('#dsgvoConsentBtn');
+        await page.waitForTimeout(200);
+
+        n = await readNotice(page);
+        check('Popup nach Klick verborgen', n.modalVisible === false);
+
+        const marker = await page.evaluate(() =>
+            localStorage.getItem('paraloxStunden.dsgvoAccepted'));
+        check('Marker paraloxStunden.dsgvoAccepted gesetzt (ISO-Zeitstempel)',
+            !!marker && /^\d{4}-\d{2}-\d{2}T/.test(marker), marker);
+
+        // Reload → Popup darf nicht erneut erscheinen
+        await page.reload({ waitUntil: 'networkidle' });
+        await page.waitForTimeout(800);
+        n = await readNotice(page);
+        check('Nach Reload bleibt Popup verborgen', n.modalVisible === false);
+
         await browser.close();
     }
 

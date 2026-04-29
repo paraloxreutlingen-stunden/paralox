@@ -158,8 +158,7 @@ h3 {
             "head    head"
             "intro   intro"
             "hint    hint"
-            "form    pin"
-            "dsgvo   dsgvo";
+            "form    pin";
         column-gap: 1.5rem;
         row-gap: 0;
         align-items: start;
@@ -169,7 +168,6 @@ h3 {
     #view-login:has(#loginPinboard:not(.hidden)) > #loginEmptyHint { grid-area: hint; }
     #view-login:has(#loginPinboard:not(.hidden)) > #loginForm     { grid-area: form; }
     #view-login:has(#loginPinboard:not(.hidden)) > #loginPinboard { grid-area: pin; margin-top: 0; }
-    #view-login:has(#loginPinboard:not(.hidden)) > .dsgvo-notice  { grid-area: dsgvo; margin-top: 1.5rem; }
 }
 
 #view-login h1 {
@@ -615,16 +613,20 @@ tr.editing td {
     font-style: italic;
 }
 
-/* Login: DSGVO-Hinweis (ganz unten, klein) */
-.dsgvo-notice {
-    margin-top: 2rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border);
-    font-size: .72rem;
-    line-height: 1.45;
-    color: var(--muted);
-    text-align: justify;
+/* DSGVO-Consent-Modal: einmaliger Hinweis beim ersten Besuch.
+   Etwas breiter als das Standard-Modal — der Text ist lang. */
+.modal-box.dsgvo-consent {
+    max-width: 640px;
 }
+.modal-box.dsgvo-consent #dsgvoNotice {
+    font-size: .9rem;
+    line-height: 1.5;
+    color: var(--muted);
+    max-height: 60vh;
+    overflow-y: auto;
+}
+.modal-box.dsgvo-consent #dsgvoNotice p { margin: 0 0 .75rem; }
+.modal-box.dsgvo-consent #dsgvoNotice p:last-child { margin-bottom: 0; }
 
 /* Pinnwand (Admin-Tab): Textarea etwas höher */
 #pinText {
