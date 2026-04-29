@@ -4,6 +4,10 @@
 
     const KEY = 'paraloxStunden.v1';
     const SESSION_KEY = 'paraloxStunden.session';
+    // Bewusst NICHT in KEY enthalten: das Backup-Datum gehört zum Gerät, nicht
+    // zu den Daten. Sonst würde ein importiertes Backup auf einem neuen Gerät
+    // sofort glauben, es sei heute schon gesichert worden.
+    const LAST_BACKUP_KEY = 'paraloxStunden.lastBackup';
 
     const DEFAULT_SETTINGS = {
         wageSingle: 14,
@@ -14,6 +18,13 @@
         // wenn der Mitarbeiter nicht von der RV-Pflicht befreit ist. Stand 2026:
         // 18,6% allgemeiner Beitrag minus 15% AG-Pauschale = 3,6% AN-Anteil.
         rvAnteilProzent: 3.6,
+        // Tagessicherung per Mail (Web Share / mailto-Fallback). Aktiviert wird
+        // sie über den Settings-Tab; greift beim ersten erfolgreichen
+        // Schicht-Speichern eines neuen Tages.
+        dailyBackup: {
+            enabled: false,
+            recipient: 'backup@example.org',
+        },
         rooms: {
             FP: { name: 'Raum 1',        owner1: 100, owner2: 0   },
             SL: { name: 'Raum 3',  owner1: 100, owner2: 0   },
@@ -85,6 +96,14 @@
         if (typeof data.settings.rvAnteilProzent !== 'number' || isNaN(data.settings.rvAnteilProzent)) {
             data.settings.rvAnteilProzent = DEFAULT_SETTINGS.rvAnteilProzent;
         }
+        data.settings.dailyBackup = Object.assign(
+            {}, DEFAULT_SETTINGS.dailyBackup, data.settings.dailyBackup || {});
+        if (typeof data.settings.dailyBackup.enabled !== 'boolean') {
+            data.settings.dailyBackup.enabled = false;
+        }
+        if (typeof data.settings.dailyBackup.recipient !== 'string' || !data.settings.dailyBackup.recipient.trim()) {
+            data.settings.dailyBackup.recipient = DEFAULT_SETTINGS.dailyBackup.recipient;
+        }
         data.pinboard  = Object.assign({ text: '', updatedAt: null, updatedBy: null }, data.pinboard || {});
         if (typeof data.adminNotes !== 'string') data.adminNotes = '';
         data.updatedAt = data.updatedAt || new Date().toISOString();
@@ -129,6 +148,14 @@
         sessionStorage.removeItem(SESSION_KEY);
     }
 
+    function getLastBackupDate() {
+        return localStorage.getItem(LAST_BACKUP_KEY) || null;
+    }
+    function setLastBackupDate(isoDate) {
+        if (isoDate) localStorage.setItem(LAST_BACKUP_KEY, isoDate);
+        else localStorage.removeItem(LAST_BACKUP_KEY);
+    }
+
     function nextId(items) {
         let max = 0;
         items.forEach(i => { if (+i.id > max) max = +i.id; });
@@ -140,6 +167,7 @@
         DEFAULT_SETTINGS,
         load, save, replace,
         getSession, setSession, clearSession,
+        getLastBackupDate, setLastBackupDate,
         nextId,
     };
 })();

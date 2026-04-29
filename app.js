@@ -695,6 +695,10 @@
         });
         saveData();
         toast('Schicht gespeichert', 'success');
+        // Tagessicherung: beim ersten Save jedes Tages, falls aktiviert.
+        // Fire-and-forget — der Share-Dialog läuft asynchron, das Form
+        // setzt sich darunter schon zurück.
+        runDailyBackup({ force: false });
         $('#sfDate').value = todayISO();
         $('#sfStart').value = '';
         $('#sfEnd').value = '';
@@ -1600,6 +1604,10 @@
         $('#setSingle').value = settings().wageSingle;
         $('#setDouble').value = settings().wageDouble;
         $('#setRvAnteil').value = settings().rvAnteilProzent;
+        const cfg = settings().dailyBackup || {};
+        $('#setBackupEnabled').checked = !!cfg.enabled;
+        $('#setBackupRecipient').value = cfg.recipient || '';
+        renderBackupStatus();
         const admin = isAdmin();
         $$('#settingsForm input, #settingsForm button').forEach(el => el.disabled = !admin);
         $('#settingsForm').title = admin ? '' : 'Nur Admins können Einstellungen ändern.';
@@ -1617,6 +1625,115 @@
         });
     }
 
+    // ---------- Tagessicherung per Mail ----------
+
+    /* Status: Sperre verhindert Mehrfach-Aufrufe, falls in schneller Folge
+     * gespeichert wird, während der Share-Dialog noch offen ist. */
+    let backupInProgress = false;
+
+    function todayLocalISO() {
+        const d = new Date();
+        const tz = d.getTimezoneOffset() * 60000;
+        return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+    }
+
+    function buildBackupBlob() {
+        // Wir packen den vollen App-State plus ein paar Metadaten in eine
+        // .json-Datei. Reicht zum Wiederherstellen auf einem neuen Tablet.
+        const payload = {
+            type: 'paralox-stunden-backup',
+            version: 1,
+            createdAt: new Date().toISOString(),
+            data: state.data,
+        };
+        const json = JSON.stringify(payload, null, 2);
+        return new Blob([json], { type: 'application/json' });
+    }
+
+    function backupFilename() {
+        return `paralox-backup-${todayLocalISO()}.json`;
+    }
+
+    /* Versucht, die Backup-Datei via Web Share API zu teilen. Auf Android
+     * Chrome erscheint der System-Share-Dialog mit der Datei als Anhang —
+     * der User wählt "Mail" und tippt einmal "Senden". Wenn Web Share Files
+     * nicht verfügbar ist (Desktop), Fallback: Datei wird heruntergeladen
+     * und der Standard-Mail-Client wird mit vorgefüllten Feldern geöffnet —
+     * dort muss der User die heruntergeladene Datei selbst anhängen.
+     *
+     * Returns true wenn der Share/Versand-Dialog erfolgreich geöffnet wurde,
+     * false bei Fehler/Abbruch (dann nicht als "heute gesichert" markieren).
+     */
+    async function runDailyBackup({ force = false } = {}) {
+        if (backupInProgress) return false;
+        const cfg = settings().dailyBackup || {};
+        if (!force && !cfg.enabled) return false;
+        const today = todayLocalISO();
+        if (!force && window.ParaloxStorage.getLastBackupDate() === today) return false;
+        const recipient = (cfg.recipient || '').trim();
+
+        backupInProgress = true;
+        try {
+            const blob = buildBackupBlob();
+            const filename = backupFilename();
+
+            if (typeof File === 'function' && navigator.canShare) {
+                const file = new File([blob], filename, { type: 'application/json' });
+                if (navigator.canShare({ files: [file] })) {
+                    try {
+                        await navigator.share({
+                            files: [file],
+                            title: 'Paralox Tagessicherung ' + today,
+                            text: recipient
+                                ? `Bitte als Anhang an ${recipient} senden.`
+                                : 'Backup-Datei zum Versand.',
+                        });
+                        window.ParaloxStorage.setLastBackupDate(today);
+                        renderBackupStatus();
+                        toast('Tagessicherung gesendet', 'success');
+                        return true;
+                    } catch (e) {
+                        // AbortError = User hat den Dialog geschlossen → leise weiter
+                        if (e && e.name === 'AbortError') return false;
+                        console.warn('Web Share fehlgeschlagen, nutze mailto-Fallback', e);
+                    }
+                }
+            }
+
+            // Fallback: Datei herunterladen + Mail-Client öffnen
+            downloadBlob(blob, filename);
+            const subject = `Paralox Tagessicherung ${today}`;
+            const body = `Heute heruntergeladene Backup-Datei "${filename}" bitte als Anhang einfügen und absenden.\n\n— Paralox Stundenverwaltung`;
+            const mailto = `mailto:${encodeURIComponent(recipient)}` +
+                `?subject=${encodeURIComponent(subject)}` +
+                `&body=${encodeURIComponent(body)}`;
+            // mailto öffnet das Standard-Mail-Programm; Datei muss manuell angehängt werden
+            window.location.href = mailto;
+            window.ParaloxStorage.setLastBackupDate(today);
+            renderBackupStatus();
+            toast('Backup heruntergeladen — bitte als Anhang an die Mail einfügen', 'info');
+            return true;
+        } catch (e) {
+            console.warn('Tagessicherung fehlgeschlagen', e);
+            toast('Sicherung fehlgeschlagen: ' + (e.message || e), 'error');
+            return false;
+        } finally {
+            backupInProgress = false;
+        }
+    }
+
+    function renderBackupStatus() {
+        const el = $('#backupStatus');
+        if (!el) return;
+        const last = window.ParaloxStorage.getLastBackupDate();
+        if (!last) {
+            el.textContent = 'Letzte Sicherung: noch keine.';
+            return;
+        }
+        if (last === todayLocalISO()) el.textContent = 'Letzte Sicherung: heute ✓';
+        else el.textContent = 'Letzte Sicherung: ' + fmtDateDE(last);
+    }
+
     $('#settingsForm').addEventListener('submit', (ev) => {
         ev.preventDefault();
         settings().wageSingle = Math.max(0, Number($('#setSingle').value) || 0);
@@ -1626,6 +1743,24 @@
         saveData();
         renderPreview();
         toast('Einstellungen gespeichert', 'success');
+    });
+
+    $('#backupForm').addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        const cfg = settings().dailyBackup;
+        cfg.enabled = $('#setBackupEnabled').checked;
+        const r = $('#setBackupRecipient').value.trim();
+        if (cfg.enabled && !r) {
+            toast('Bitte eine Empfänger-Adresse eintragen.', 'error');
+            return;
+        }
+        cfg.recipient = r || cfg.recipient;
+        saveData();
+        toast('Tagessicherung gespeichert', 'success');
+    });
+
+    $('#backupNow').addEventListener('click', async () => {
+        await runDailyBackup({ force: true });
     });
 
     // ---------- Pinnwand ----------
