@@ -577,6 +577,32 @@
             });
         }
         renderLoginPinboard();
+        renderDsgvoNotice();
+    }
+
+    /* DSGVO-Hinweis wechselt je nachdem, ob die Tagessicherung per Mail
+     * eingeschaltet ist. Mit aktiver Sicherung wird der Empfänger und der
+     * Auftragsverarbeiter (GMX) genannt — ohne Sicherung gilt die kurze
+     * Lokal-Speicherungs-Variante. Aufgerufen beim Initial-Render und
+     * wenn der Owner die Einstellung ändert. */
+    const VERANTWORTLICH = 'Beispiel GbR, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen · Owner2 Schmid, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen';
+    function renderDsgvoNotice() {
+        const el = $('#dsgvoNotice');
+        if (!el) return;
+        const cfg = settings()?.dailyBackup || {};
+        if (!cfg.enabled) {
+            el.innerHTML =
+                '<p>Die erfassten Arbeitszeiten werden ausschließlich lokal auf diesem Gerät gespeichert. Es findet keine Übertragung an externe Dienste statt. Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>' +
+                `<p>Verantwortlich: ${escapeHtml(VERANTWORTLICH)}</p>`;
+            return;
+        }
+        const recipient = (cfg.recipient || '').trim();
+        el.innerHTML =
+            '<p>Die erfassten Arbeitszeiten werden lokal auf diesem Gerät gespeichert.</p>' +
+            '<p><strong>Tagessicherung per E-Mail (aktiv):</strong> Einmal pro Tag wird beim ersten Login eine Backup-Datei mit allen erfassten Daten (Mitarbeiternamen, Arbeitszeiten, Lohn-Einstellungen) als Anhang einer E-Mail an ' +
+            `<strong>${escapeHtml(recipient || '— nicht konfiguriert —')}</strong>` +
+            ' versendet. Auftragsverarbeiter ist 1&1 Mail &amp; Media GmbH (GMX, Deutschland) sowie der Mail-Anbieter des Endgeräts. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an der Datensicherung gegen Geräteverlust). Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>' +
+            `<p>Verantwortlich: ${escapeHtml(VERANTWORTLICH)}</p>`;
     }
 
     function renderLoginPinboard() {

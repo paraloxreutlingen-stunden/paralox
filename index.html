@@ -56,8 +56,9 @@
         <div id="loginPinboard" class="pinboard-box hidden"></div>
 
         <!-- DSGVO-Hinweis ganz unten, klein -->
-        <div class="dsgvo-notice">
-            Die erfassten Arbeitszeiten werden ausschließlich lokal auf diesem Gerät gespeichert. Es findet keine Übertragung an externe Dienste statt. Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben. Verantwortlich: Beispiel GbR, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen · Owner2 Schmid, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen
+        <div class="dsgvo-notice" id="dsgvoNotice">
+            <!-- wird dynamisch von renderDsgvoNotice() befüllt — Inhalt hängt
+                 davon ab, ob die Tagessicherung per Mail aktiv ist. -->
         </div>
     </section>
 
