@@ -153,6 +153,35 @@ h3 {
     max-width: 440px;
     margin: 4rem auto;
 }
+
+/* Tablet+: wenn eine Pinnwand-Mitteilung sichtbar ist, Login-Formular und
+   Pinnwand zweispaltig nebeneinander stellen — sonst muss man auf dem iPad
+   scrollen, um den Login-Button zu sehen. Ohne Mitteilung bleibt das schmale
+   Layout wie bisher. */
+@media (min-width: 720px) {
+    #view-login:has(#loginPinboard:not(.hidden)) {
+        max-width: 880px;
+        margin-top: 3rem;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-areas:
+            "head    head"
+            "intro   intro"
+            "hint    hint"
+            "form    pin"
+            "dsgvo   dsgvo";
+        column-gap: 1.5rem;
+        row-gap: 0;
+        align-items: start;
+    }
+    #view-login:has(#loginPinboard:not(.hidden)) > h1            { grid-area: head; }
+    #view-login:has(#loginPinboard:not(.hidden)) > p.muted        { grid-area: intro; }
+    #view-login:has(#loginPinboard:not(.hidden)) > #loginEmptyHint { grid-area: hint; }
+    #view-login:has(#loginPinboard:not(.hidden)) > #loginForm     { grid-area: form; }
+    #view-login:has(#loginPinboard:not(.hidden)) > #loginPinboard { grid-area: pin; margin-top: 0; }
+    #view-login:has(#loginPinboard:not(.hidden)) > .dsgvo-notice  { grid-area: dsgvo; margin-top: 1.5rem; }
+}
+
 #view-login h1 {
     background: linear-gradient(135deg, var(--accent), var(--accent-2) 70%, var(--accent-3));
     -webkit-background-clip: text;
