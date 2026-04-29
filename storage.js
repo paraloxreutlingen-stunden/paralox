@@ -105,12 +105,6 @@
         if (typeof data.settings.dailyBackup.recipient !== 'string') {
             data.settings.dailyBackup.recipient = DEFAULT_SETTINGS.dailyBackup.recipient;
         }
-        // Migration: alter hartcodierter Default (Privatadresse) wird einmalig
-        // auf die dedizierte Backup-Adresse umgestellt — sofern der User noch
-        // nicht selbst etwas anderes eingetragen hat.
-        if (data.settings.dailyBackup.recipient === 'backup@example.org') {
-            data.settings.dailyBackup.recipient = DEFAULT_SETTINGS.dailyBackup.recipient;
-        }
         data.pinboard  = Object.assign({ text: '', updatedAt: null, updatedBy: null }, data.pinboard || {});
         if (typeof data.adminNotes !== 'string') data.adminNotes = '';
         data.updatedAt = data.updatedAt || new Date().toISOString();
