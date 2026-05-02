@@ -655,6 +655,16 @@
         `;
     }
 
+    /* Passwort-Feld beim Namens-Wechsel leeren — sonst füllt der Browser
+     * blindlings das zuletzt gespeicherte Passwort ein, egal welcher User
+     * im Dropdown gewählt wurde. So muss man bei einem anderen Mitarbeiter
+     * aktiv das richtige Passwort eintippen. Auch sichtbare Fehlermeldung
+     * vom letzten Versuch wird ausgeblendet. */
+    $('#loginName').addEventListener('change', () => {
+        $('#loginPassword').value = '';
+        $('#loginError').classList.add('hidden');
+    });
+
     $('#loginForm').addEventListener('submit', (ev) => {
         ev.preventDefault();
         const err = $('#loginError');
