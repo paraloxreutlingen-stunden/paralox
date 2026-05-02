@@ -726,7 +726,19 @@ tr.editing td {
 }
 
 </style>
-<link rel="icon" href="data:,">
+
+<!-- PWA: Manifest, Theme, Home-Screen-Icon (iOS/Android). Wenn die App von
+     einer stabilen URL (z.B. GitHub Pages) geladen wird, kann der Nutzer sie
+     "Zum Home-Bildschirm" hinzufügen → eigenes Icon, Vollbild, offline-fähig.
+     Im file://-Modus harmlos: Manifest und Service Worker ignorieren -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#6d28d9">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Paralox">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
 </head>
 <body>
 
@@ -3699,6 +3711,21 @@ window.ParaloxConfig = {
     init();
 })();
 
+</script>
+
+<!-- PWA-Service-Worker registrieren. Funktioniert nur unter https:// (oder
+     localhost / 127.0.0.1 zum Entwickeln). Im file://-Modus ist navigator
+     .serviceWorker undefined oder die Registrierung schlägt fehl — egal,
+     die App läuft dann normal als nicht-installierbare Webapp weiter. -->
+<script>
+if ('serviceWorker' in navigator
+        && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('service-worker.js').catch((e) => {
+            console.warn('Service Worker konnte nicht registriert werden:', e);
+        });
+    });
+}
 </script>
 </body>
 </html>
