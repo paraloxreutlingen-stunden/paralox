@@ -73,6 +73,12 @@
         <div class="card">
             <h2>Neue Schicht erfassen</h2>
             <form id="shiftForm" class="grid" autocomplete="off">
+                <!-- Mitarbeiter-Auswahl: nur für Admins sichtbar, damit sie
+                     vergessene/vergangene Schichten für andere nachtragen können. -->
+                <label id="sfEmpWrap" class="hidden">Mitarbeiter
+                    <select id="sfEmp" autocomplete="off"></select>
+                    <small class="hint">Admin-Funktion: Schicht für einen anderen Mitarbeiter erfassen.</small>
+                </label>
                 <label>Datum
                     <input type="date" id="sfDate" required>
                 </label>

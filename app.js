@@ -714,6 +714,29 @@
         // Browser-Autocomplete / Form-Restore unterbinden
         $('#sfRoom').value  = '';
         $('#sfRoom2').value = '';
+
+        // Mitarbeiter-Dropdown für Admins befüllen + nur für Admins zeigen.
+        // Default: der eingeloggte Admin selbst — sonst wäre versehentliches
+        // Verbuchen auf den falschen Mitarbeiter zu leicht.
+        const empWrap = $('#sfEmpWrap');
+        const empSel = $('#sfEmp');
+        if (isAdmin()) {
+            empSel.innerHTML = '';
+            [...employees()]
+                .filter(e => e.isActive)
+                .sort((a, b) => a.name.localeCompare(b.name, 'de'))
+                .forEach(e => {
+                    const o = document.createElement('option');
+                    o.value = e.id;
+                    o.textContent = e.name;
+                    empSel.appendChild(o);
+                });
+            empSel.value = state.user.id;
+            empWrap.classList.remove('hidden');
+        } else {
+            empWrap.classList.add('hidden');
+        }
+
         renderPreview();
         buildTabs();
         startIdleTimer();
@@ -742,8 +765,13 @@
         const btn = ev.submitter || $('#shiftForm button[type="submit"]');
         if (btn && btn.disabled) return;
         const isD = $('#sfDouble').checked;
+        // Admins dürfen Schichten für beliebige Mitarbeiter erfassen
+        // (sfEmp-Dropdown). Sonst gilt immer der eingeloggte User.
+        const targetEmpId = isAdmin() && $('#sfEmp').value
+            ? Number($('#sfEmp').value)
+            : state.user.id;
         const payload = {
-            employeeId: state.user.id,
+            employeeId: targetEmpId,
             date: $('#sfDate').value,
             startTime: $('#sfStart').value,
             endTime: $('#sfEnd').value,
@@ -780,12 +808,18 @@
             createdAt: new Date().toISOString(),
         });
         saveData();
-        toast('Schicht gespeichert', 'success');
+        const savedForOther = isAdmin() && targetEmpId !== state.user.id;
+        toast(savedForOther
+            ? `Schicht für ${empName(targetEmpId)} gespeichert`
+            : 'Schicht gespeichert', 'success');
         $('#sfDate').value = todayISO();
         $('#sfStart').value = '';
         $('#sfEnd').value = '';
         $('#sfNote').value = '';
         $('#sfDouble').checked = false;
+        // Mitarbeiter-Dropdown wieder auf den eingeloggten Admin zurücksetzen,
+        // damit nicht versehentlich die nächste Schicht für jemand anderen läuft.
+        if (isAdmin()) $('#sfEmp').value = state.user.id;
         refreshShiftRoomSelects();
         // Beide Raum-Felder leeren, bis der Nutzer wieder wählt
         $('#sfRoom').value  = '';
