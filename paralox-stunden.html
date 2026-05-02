@@ -960,16 +960,35 @@ tr.editing td {
             <p class="muted small">
                 Doppelüberwachung: jeder der beiden Räume trägt 50% zur Kostenaufteilung bei, verteilt gemäß der oben angezeigten Eigentümer-Anteile.
             </p>
-            <h3>Tagessicherung per Mail</h3>
+            <h3>Backup-Passwort (Pflicht)</h3>
             <p class="muted small">
-                Beim ersten Schicht-Speichern jedes Tages öffnet die App automatisch
-                den Teilen-Dialog mit einer Backup-Datei aller Daten als Anhang.
-                Du tippst nur „Mail" und „Senden". Pro Tag passiert das maximal einmal.
+                Alle automatischen Backup-Anhänge (Tagessicherung &amp; Monatsabschluss) werden mit diesem Passwort verschlüsselt — Mitarbeiter sehen im Share-Dialog nur unleserliche <code>.enc</code>-Dateien. Zum Wiederherstellen brauchst du das gleiche Passwort. <strong>Bitte sicher notieren — geht es verloren, sind alte Backups unbrauchbar.</strong>
+            </p>
+            <form id="backupPasswordForm" class="grid">
+                <label>Backup-Passwort
+                    <input type="password" id="setBackupPassword" autocomplete="new-password"
+                        minlength="8" placeholder="mindestens 8 Zeichen">
+                    <small class="hint" id="backupPasswordHint">Noch nicht gesetzt — automatische Sicherungen pausieren, bis ein Passwort hinterlegt ist.</small>
+                </label>
+                <label class="checkbox">
+                    <input type="checkbox" id="setBackupPasswordShow">
+                    <span>Passwort anzeigen</span>
+                </label>
+                <div class="actions">
+                    <button class="btn primary" type="submit">Backup-Passwort speichern</button>
+                </div>
+            </form>
+
+            <h3>Tagessicherung &amp; Monatsabschluss per Mail</h3>
+            <p class="muted small">
+                Beim ersten Login eines neuen Tages bzw. Monats öffnet die App automatisch
+                den Teilen-Dialog mit den verschlüsselten Backup-Anhängen.
+                Mitarbeiter tippen nur „Mail" und „Senden", sehen keine Inhalte.
             </p>
             <form id="backupForm" class="grid">
                 <label class="checkbox">
                     <input type="checkbox" id="setBackupEnabled">
-                    <span>Tagessicherung aktiv (JSON + CSV als Anhang)</span>
+                    <span>Tagessicherung aktiv (verschlüsseltes JSON + CSV als Anhang)</span>
                 </label>
                 <label>Empfänger-E-Mail (Tagessicherung)
                     <input type="email" id="setBackupRecipient" autocomplete="off"
@@ -978,7 +997,7 @@ tr.editing td {
                 </label>
                 <label class="checkbox">
                     <input type="checkbox" id="setMonthlyEnabled">
-                    <span>Monatsabschluss-Mail aktiv (Minijob-PDF + CSV des Vormonats — zur Aufbewahrung wegen Lohn-Pflichten, 10 Jahre)</span>
+                    <span>Monatsabschluss-Mail aktiv (verschlüsseltes Minijob-PDF + CSV des Vormonats — zur Aufbewahrung wegen Lohn-Pflichten, 10 Jahre)</span>
                 </label>
                 <label>Empfänger-E-Mail (Monatsabschluss)
                     <input type="email" id="setMonthlyRecipient" autocomplete="off"
@@ -989,6 +1008,25 @@ tr.editing td {
                 <div class="actions">
                     <button class="btn primary" type="submit">Einstellungen speichern</button>
                     <button class="btn" type="button" id="backupNow">Jetzt sichern</button>
+                </div>
+            </form>
+
+            <h3>Verschlüsselte Sicherung importieren</h3>
+            <p class="muted small">
+                Wähle eine empfangene <code>.enc</code>-Datei. Sie wird mit dem oben hinterlegten Backup-Passwort entschlüsselt.
+                JSON-Dateien können das komplette Daten-Backup wiederherstellen, CSV/PDF werden als Klartext-Datei heruntergeladen.
+            </p>
+            <form id="backupImportForm" class="grid">
+                <label>Verschlüsselte Datei
+                    <input type="file" id="setBackupImportFile" accept=".enc">
+                </label>
+                <label>Passwort (falls abweichend vom oben gespeicherten)
+                    <input type="password" id="setBackupImportPassword" autocomplete="off"
+                        placeholder="leer lassen = gespeichertes verwenden">
+                </label>
+                <div class="actions">
+                    <button class="btn" type="button" id="backupImportDecrypt">Entschlüsseln &amp; herunterladen</button>
+                    <button class="btn primary" type="button" id="backupImportRestore">Backup wiederherstellen (nur JSON)</button>
                 </div>
             </form>
         </div>
@@ -1051,7 +1089,7 @@ tr.editing td {
 <!-- bcryptjs für Passwort-Hashing -->
 <script src="https://cdn.jsdelivr.net/npm/bcryptjs@2.4.3/dist/bcrypt.min.js" defer></script>
 
-<!-- Eingebettete Skripte: config -> storage -> app (drive deaktiviert) -->
+<!-- Eingebettete Skripte: config -> crypto -> storage -> app (drive deaktiviert) -->
 <script>
 /* config.js */
 /* Paralox Stundenverwaltung - Konfiguration
@@ -1085,6 +1123,117 @@ window.ParaloxConfig = {
 
 </script>
 <script>
+/* crypto.js */
+/* Paralox Stundenverwaltung - Krypto-Helfer für Backup-Verschlüsselung
+ *
+ * Verschlüsselt Backup-Anhänge (JSON / CSV / PDF) symmetrisch mit AES-GCM 256.
+ * Der Schlüssel wird per PBKDF2 (100 000 Iter, SHA-256) aus dem in den
+ * Settings hinterlegten Backup-Passwort abgeleitet.
+ *
+ * .enc-Dateiformat (Bytes):
+ *   0..3   Magic "PXEN"      (Identifikation)
+ *   4      Version           (aktuell 0x01)
+ *   5..20  Salt              (16 Bytes, zufällig pro Datei → PBKDF2)
+ *   21..32 IV                (12 Bytes, zufällig pro Datei → AES-GCM)
+ *   33..   Ciphertext + Tag  (AES-GCM-Output, Tag liegt am Ende)
+ *
+ * So sind Salt und IV pro Datei eindeutig — gleiche Klartexte ergeben nie
+ * gleiche Chiffrate.
+ */
+(() => {
+    'use strict';
+
+    const MAGIC = new Uint8Array([0x50, 0x58, 0x45, 0x4E]); // "PXEN"
+    const VERSION = 0x01;
+    const SALT_LEN = 16;
+    const IV_LEN = 12;
+    const PBKDF2_ITER = 100000;
+    const KEY_BITS = 256;
+    const HEADER_LEN = MAGIC.length + 1 + SALT_LEN + IV_LEN; // 33
+
+    async function deriveKey(password, salt) {
+        const baseKey = await crypto.subtle.importKey(
+            'raw',
+            new TextEncoder().encode(password),
+            { name: 'PBKDF2' },
+            false,
+            ['deriveKey']
+        );
+        return crypto.subtle.deriveKey(
+            { name: 'PBKDF2', salt, iterations: PBKDF2_ITER, hash: 'SHA-256' },
+            baseKey,
+            { name: 'AES-GCM', length: KEY_BITS },
+            false,
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    /* Verschlüsselt einen Blob. Liefert einen neuen Blob im .enc-Format. */
+    async function encryptBlob(blob, password) {
+        if (!password) throw new Error('Backup-Passwort fehlt');
+        const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
+        const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
+        const key = await deriveKey(password, salt);
+        const plain = new Uint8Array(await blob.arrayBuffer());
+        const ct = new Uint8Array(await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv }, key, plain
+        ));
+        const out = new Uint8Array(HEADER_LEN + ct.length);
+        let pos = 0;
+        out.set(MAGIC, pos); pos += MAGIC.length;
+        out[pos++] = VERSION;
+        out.set(salt, pos); pos += SALT_LEN;
+        out.set(iv, pos); pos += IV_LEN;
+        out.set(ct, pos);
+        return new Blob([out], { type: 'application/octet-stream' });
+    }
+
+    /* Entschlüsselt eine .enc-Datei. Wirft eine sprechende Exception bei
+     * falschem Passwort, falschem Format oder beschädigter Datei. */
+    async function decryptBlob(blob, password) {
+        if (!password) throw new Error('Backup-Passwort fehlt');
+        const buf = new Uint8Array(await blob.arrayBuffer());
+        if (buf.length < HEADER_LEN + 16) {
+            throw new Error('Datei ist zu klein, um eine verschlüsselte Sicherung zu sein.');
+        }
+        for (let i = 0; i < MAGIC.length; i++) {
+            if (buf[i] !== MAGIC[i]) {
+                throw new Error('Datei ist keine Paralox-Sicherung (PXEN-Header fehlt).');
+            }
+        }
+        const version = buf[MAGIC.length];
+        if (version !== VERSION) {
+            throw new Error('Unbekannte Sicherungs-Version: ' + version);
+        }
+        let pos = MAGIC.length + 1;
+        const salt = buf.slice(pos, pos + SALT_LEN); pos += SALT_LEN;
+        const iv = buf.slice(pos, pos + IV_LEN); pos += IV_LEN;
+        const ct = buf.slice(pos);
+        const key = await deriveKey(password, salt);
+        let plain;
+        try {
+            plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+        } catch {
+            throw new Error('Falsches Passwort oder beschädigte Datei.');
+        }
+        return new Uint8Array(plain);
+    }
+
+    /* Hilfsfunktion: hängt ".enc" an einen Dateinamen, wenn noch nicht vorhanden. */
+    function encName(originalName) {
+        return /\.enc$/i.test(originalName) ? originalName : originalName + '.enc';
+    }
+
+    /* Hilfsfunktion: entfernt das ".enc"-Suffix für den entschlüsselten Output. */
+    function originalName(encryptedName) {
+        return encryptedName.replace(/\.enc$/i, '');
+    }
+
+    window.ParaloxCrypto = { encryptBlob, decryptBlob, encName, originalName };
+})();
+
+</script>
+<script>
 /* storage.js */
 /* Paralox Stundenverwaltung - Storage-Schicht (localStorage) */
 (() => {
@@ -1103,6 +1252,11 @@ window.ParaloxConfig = {
     // damit ein importiertes Backup auf einem neuen Gerät erneut die
     // Zustimmung verlangt.
     const DSGVO_ACCEPTED_KEY = 'paraloxStunden.dsgvoAccepted';
+    // Symmetrisches Backup-Passwort für die Verschlüsselung der automatischen
+    // Backup-Anhänge (AES-GCM 256, PBKDF2). Wird vom Admin in den Settings
+    // gesetzt und gerätelokal gehalten — nicht im JSON-Backup, sonst hätte
+    // jeder, der das Backup hat, automatisch das Passwort.
+    const BACKUP_PASSWORD_KEY = 'paraloxStunden.backupPassword';
 
     const DEFAULT_SETTINGS = {
         wageSingle: 14,
@@ -1282,6 +1436,13 @@ window.ParaloxConfig = {
         if (iso) localStorage.setItem(DSGVO_ACCEPTED_KEY, iso);
         else localStorage.removeItem(DSGVO_ACCEPTED_KEY);
     }
+    function getBackupPassword() {
+        return localStorage.getItem(BACKUP_PASSWORD_KEY) || null;
+    }
+    function setBackupPassword(pw) {
+        if (pw) localStorage.setItem(BACKUP_PASSWORD_KEY, pw);
+        else localStorage.removeItem(BACKUP_PASSWORD_KEY);
+    }
 
     function nextId(items) {
         let max = 0;
@@ -1297,6 +1458,7 @@ window.ParaloxConfig = {
         getLastBackupDate, setLastBackupDate,
         getLastMonthlyArchive, setLastMonthlyArchive,
         getDsgvoAccepted, setDsgvoAccepted,
+        getBackupPassword, setBackupPassword,
         nextId,
     };
 })();
@@ -1316,6 +1478,11 @@ window.ParaloxConfig = {
     const IDLE_TIMEOUT_MS  = 8 * 60 * 1000; // 8 Minuten Auto-Logout
     const MAX_END_MIN_NONADMIN = 24 * 60 + 30; // 00:30 am Folgetag (Schichtende darf nicht später liegen)
     const MONTH_NAMES = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+    /* Buchhaltungs-Konten dürfen in der Gesamt-Stundenliste und den Exporten
+     * nur die letzten N Tage sehen — alles davor wird ausgeblendet, da es für
+     * die laufende Lohnabrechnung nicht mehr nötig ist. „Meine Stunden" für
+     * eigene Schichten bleibt unbegrenzt. */
+    const VIEW_DAYS_LIMIT_ACCOUNTANT = 90;
 
     const state = {
         user: null,
@@ -2115,18 +2282,18 @@ window.ParaloxConfig = {
         });
     }
 
-    function fillYearMonthSelects(yearSelId, monthSelId) {
+    function fillYearMonthSelects(yearSelId, monthSelId, sourceFn = shifts) {
         const ySel = $(yearSelId);
         const mSel = $(monthSelId);
         const prevY = ySel.value;
         const prevM = mSel.value;
 
-        // Jahre aus vorhandenen Schichten plus aktuelles Jahr
+        // Jahre aus den für den Aufrufer relevanten Schichten plus aktuelles Jahr
         const yearSet = new Set();
         const cur = new Date().getFullYear();
         yearSet.add(cur);
         yearSet.add(cur - 1);
-        shifts().forEach(s => { const y = s.date.slice(0, 4); if (y) yearSet.add(Number(y)); });
+        sourceFn().forEach(s => { const y = s.date.slice(0, 4); if (y) yearSet.add(Number(y)); });
         const years = [...yearSet].sort((a, b) => b - a);
 
         ySel.innerHTML = '<option value="">Alle Jahre</option>';
@@ -2207,7 +2374,9 @@ window.ParaloxConfig = {
     }
 
     function renderMine() {
-        fillYearMonthSelects('#mineYear', '#mineMonth');
+        // Jahresliste nur aus eigenen Schichten — auch für Buchhaltungs-Konten
+        // bleibt „Meine Stunden" unbegrenzt sichtbar (kein 90-Tage-Cap).
+        fillYearMonthSelects('#mineYear', '#mineMonth', mineShifts);
         renderLimits();
         const tbody = $('#mineTable tbody');
         const list = filterByPeriod(mineShifts(), '#mineYear', '#mineMonth');
@@ -2220,6 +2389,7 @@ window.ParaloxConfig = {
             totalAmt += w.amount;
             const canDelete = s.date === today;
             const tr = document.createElement('tr');
+            tr.dataset.id = s.id;
             tr.innerHTML = `
                 <td>${fmtDateDE(s.date)}</td>
                 <td>${s.startTime}</td>
@@ -2280,8 +2450,23 @@ window.ParaloxConfig = {
 
     // ---------- Admin: Alle Schichten ----------
 
+    /* Schichten, die der eingeloggte User in der Stundenliste/den Exporten
+     * sehen darf. Admin = alles, Buchhaltung = letzte 90 Tage, sonst nur
+     * eigene (wird in der UI bereits durch fehlenden Tab abgesichert,
+     * dient hier zusätzlich als Defense-in-Depth). */
+    function viewableShifts() {
+        if (isAdmin()) return shifts();
+        if (state.user?.isAccountant) {
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - VIEW_DAYS_LIMIT_ACCOUNTANT);
+            const cutoffISO = cutoff.toISOString().slice(0, 10);
+            return shifts().filter(s => s.date >= cutoffISO);
+        }
+        return shifts().filter(s => s.employeeId === state.user?.id);
+    }
+
     function adminSortedShifts() {
-        return [...shifts()].sort((a, b) =>
+        return [...viewableShifts()].sort((a, b) =>
             b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime));
     }
 
@@ -2323,7 +2508,7 @@ window.ParaloxConfig = {
     }
 
     function renderAdminShifts() {
-        fillYearMonthSelects('#adminYear', '#adminMonth');
+        fillYearMonthSelects('#adminYear', '#adminMonth', viewableShifts);
         const sel = $('#adminEmpFilter');
         const cur = sel.value;
         sel.innerHTML = '<option value="">Alle</option>';
@@ -3007,9 +3192,16 @@ window.ParaloxConfig = {
         const mcfg = settings().monthlyArchive || {};
         $('#setMonthlyEnabled').checked = !!mcfg.enabled;
         $('#setMonthlyRecipient').value = mcfg.recipient || '';
+        const pwSet = !!window.ParaloxStorage.getBackupPassword();
+        $('#setBackupPassword').value = '';
+        $('#setBackupPassword').placeholder = pwSet ? '•••••••• (gespeichert)' : 'mindestens 8 Zeichen';
+        $('#backupPasswordHint').textContent = pwSet
+            ? 'Backup-Passwort ist gesetzt. Neues Passwort eingeben + speichern überschreibt das bisherige (alte .enc-Dateien bleiben dann nur mit dem alten Passwort entschlüsselbar).'
+            : 'Noch nicht gesetzt — automatische Sicherungen pausieren, bis ein Passwort hinterlegt ist.';
         renderBackupStatus();
         const admin = isAdmin();
         $$('#settingsForm input, #settingsForm button').forEach(el => el.disabled = !admin);
+        $$('#backupPasswordForm input, #backupPasswordForm button').forEach(el => el.disabled = !admin);
         $('#settingsForm').title = admin ? '' : 'Nur Admins können Einstellungen ändern.';
         const tbody = $('#roomsTable tbody');
         tbody.innerHTML = '';
@@ -3054,6 +3246,25 @@ window.ParaloxConfig = {
         return `paralox-backup-${todayLocalISO()}.json`;
     }
 
+    /* Verschlüsselt eine Liste von Backup-Anhängen mit dem in den Settings
+     * hinterlegten Backup-Passwort. Jede Datei bekommt ein .enc-Suffix und
+     * den Typ application/octet-stream — Mitarbeiter sehen im Share-Dialog
+     * also nur unleserliche Krypto-Dateien. */
+    async function encryptBackupFiles(files) {
+        const password = window.ParaloxStorage.getBackupPassword();
+        if (!password) throw new Error('Backup-Passwort nicht gesetzt — bitte in den Einstellungen hinterlegen.');
+        const out = [];
+        for (const f of files) {
+            const encBlob = await window.ParaloxCrypto.encryptBlob(f.blob, password);
+            out.push({
+                blob: encBlob,
+                name: window.ParaloxCrypto.encName(f.name),
+                type: 'application/octet-stream',
+            });
+        }
+        return out;
+    }
+
     /* Versucht, die Backup-Datei via Web Share API zu teilen. Auf Android
      * Chrome erscheint der System-Share-Dialog mit der Datei als Anhang —
      * der User wählt "Mail" und tippt einmal "Senden". Wenn Web Share Files
@@ -3070,6 +3281,14 @@ window.ParaloxConfig = {
         if (!force && !cfg.enabled) return false;
         const today = todayLocalISO();
         if (!force && window.ParaloxStorage.getLastBackupDate() === today) return false;
+        if (!window.ParaloxStorage.getBackupPassword()) {
+            // Ohne Passwort produzieren wir keine unbrauchbaren Klartext-Backups.
+            // Admin sieht den Hinweis; Mitarbeiter müssen nicht informiert werden.
+            if (isAdmin()) {
+                toast('Backup-Passwort fehlt — bitte in den Einstellungen hinterlegen.', 'error');
+            }
+            return false;
+        }
         const recipient = (cfg.recipient || '').trim();
 
         backupInProgress = true;
@@ -3094,8 +3313,10 @@ window.ParaloxConfig = {
                 console.warn('CSV-Anhang konnte nicht erzeugt werden', e);
             }
 
+            const encFiles = await encryptBackupFiles(files);
+
             return await sendBackupViaShare({
-                files, recipient, today,
+                files: encFiles, recipient, today,
                 subject: `Paralox Tagessicherung ${today}`,
                 title: 'Paralox Tagessicherung ' + today,
                 onSuccess: () => {
@@ -3188,6 +3409,12 @@ window.ParaloxConfig = {
         if (!force && window.ParaloxStorage.getLastMonthlyArchive() === targetMonth) {
             return false;
         }
+        if (!window.ParaloxStorage.getBackupPassword()) {
+            if (isAdmin()) {
+                toast('Backup-Passwort fehlt — Monatsabschluss übersprungen.', 'error');
+            }
+            return false;
+        }
         const recipient = (cfg.recipient || '').trim();
 
         const monthShifts = shifts()
@@ -3247,8 +3474,10 @@ window.ParaloxConfig = {
                 console.warn('Minijob-PDF für Monatsabschluss fehlgeschlagen', e);
             }
 
+            const encFiles = await encryptBackupFiles(files);
+
             return await sendBackupViaShare({
-                files, recipient, today: todayLocalISO(),
+                files: encFiles, recipient, today: todayLocalISO(),
                 subject: `Paralox Monatsabschluss ${monthLabel}`,
                 title: 'Paralox Monatsabschluss ' + monthLabel,
                 onSuccess: () => {
@@ -3302,6 +3531,88 @@ window.ParaloxConfig = {
 
     $('#backupNow').addEventListener('click', async () => {
         await runDailyBackup({ force: true });
+    });
+
+    /* Backup-Passwort speichern. Liegt im localStorage (gerätelokal), nicht
+     * im JSON-Backup. Mindestens 8 Zeichen, sonst lehnen wir ab. */
+    $('#backupPasswordForm').addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        if (!isAdmin()) return;
+        const pw = $('#setBackupPassword').value;
+        if (!pw || pw.length < 8) {
+            toast('Backup-Passwort muss mindestens 8 Zeichen haben.', 'error');
+            return;
+        }
+        window.ParaloxStorage.setBackupPassword(pw);
+        $('#setBackupPassword').value = '';
+        renderSettings();
+        toast('Backup-Passwort gespeichert', 'success');
+    });
+
+    /* "Passwort anzeigen"-Toggle: schaltet das input zwischen type=password
+     * und type=text um, damit der Admin sein gerade getipptes Passwort
+     * gegenprüfen kann. */
+    $('#setBackupPasswordShow').addEventListener('change', (ev) => {
+        $('#setBackupPassword').type = ev.target.checked ? 'text' : 'password';
+    });
+
+    /* Liest die im Import-Form gewählte .enc-Datei und entschlüsselt sie mit
+     * dem im Form eingegebenen oder im localStorage gespeicherten Passwort.
+     * Wirft eine sprechende Exception bei jedem Fehler — der Caller zeigt
+     * sie als Toast an. */
+    async function readAndDecryptImportFile() {
+        const fileInput = $('#setBackupImportFile');
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) throw new Error('Bitte zuerst eine .enc-Datei auswählen.');
+        const pw = $('#setBackupImportPassword').value
+            || window.ParaloxStorage.getBackupPassword();
+        if (!pw) throw new Error('Kein Passwort eingegeben und keines gespeichert.');
+        const plain = await window.ParaloxCrypto.decryptBlob(file, pw);
+        return { file, plain };
+    }
+
+    $('#backupImportDecrypt').addEventListener('click', async () => {
+        if (!isAdmin()) return;
+        try {
+            const { file, plain } = await readAndDecryptImportFile();
+            const outName = window.ParaloxCrypto.originalName(file.name);
+            // Plain ist Uint8Array; Mime aus Endung erraten, sonst octet-stream
+            const mime = /\.json$/i.test(outName) ? 'application/json'
+                       : /\.csv$/i.test(outName)  ? 'text/csv'
+                       : /\.pdf$/i.test(outName)  ? 'application/pdf'
+                       : 'application/octet-stream';
+            downloadBlob(new Blob([plain], { type: mime }), outName);
+            toast('Datei entschlüsselt und heruntergeladen', 'success');
+        } catch (e) {
+            toast('Entschlüsselung fehlgeschlagen: ' + (e.message || e), 'error');
+        }
+    });
+
+    $('#backupImportRestore').addEventListener('click', async () => {
+        if (!isAdmin()) return;
+        try {
+            const { file, plain } = await readAndDecryptImportFile();
+            const outName = window.ParaloxCrypto.originalName(file.name);
+            if (!/\.json$/i.test(outName)) {
+                toast('Wiederherstellen funktioniert nur mit JSON-Backups.', 'error');
+                return;
+            }
+            const text = new TextDecoder().decode(plain);
+            const payload = JSON.parse(text);
+            const data = payload && payload.data ? payload.data : payload;
+            if (!data || !Array.isArray(data.employees) || !Array.isArray(data.shifts)) {
+                toast('JSON enthält keine gültige Paralox-Datenstruktur.', 'error');
+                return;
+            }
+            const ok = await confirmModal('Backup wiederherstellen?',
+                `<p>Alle aktuellen Daten auf diesem Gerät werden durch das importierte Backup ersetzt: <strong>${data.employees.length} Mitarbeiter, ${data.shifts.length} Schichten</strong>.</p><p>Diese Aktion kann nicht rückgängig gemacht werden.</p>`);
+            if (!ok) return;
+            window.ParaloxStorage.replace(data);
+            toast('Backup wiederhergestellt — Seite wird neu geladen.', 'success');
+            setTimeout(() => location.reload(), 800);
+        } catch (e) {
+            toast('Wiederherstellung fehlgeschlagen: ' + (e.message || e), 'error');
+        }
     });
 
     // ---------- Pinnwand ----------

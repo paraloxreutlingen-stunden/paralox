@@ -242,16 +242,35 @@
             <p class="muted small">
                 Doppelüberwachung: jeder der beiden Räume trägt 50% zur Kostenaufteilung bei, verteilt gemäß der oben angezeigten Eigentümer-Anteile.
             </p>
-            <h3>Tagessicherung per Mail</h3>
+            <h3>Backup-Passwort (Pflicht)</h3>
             <p class="muted small">
-                Beim ersten Schicht-Speichern jedes Tages öffnet die App automatisch
-                den Teilen-Dialog mit einer Backup-Datei aller Daten als Anhang.
-                Du tippst nur „Mail" und „Senden". Pro Tag passiert das maximal einmal.
+                Alle automatischen Backup-Anhänge (Tagessicherung &amp; Monatsabschluss) werden mit diesem Passwort verschlüsselt — Mitarbeiter sehen im Share-Dialog nur unleserliche <code>.enc</code>-Dateien. Zum Wiederherstellen brauchst du das gleiche Passwort. <strong>Bitte sicher notieren — geht es verloren, sind alte Backups unbrauchbar.</strong>
+            </p>
+            <form id="backupPasswordForm" class="grid">
+                <label>Backup-Passwort
+                    <input type="password" id="setBackupPassword" autocomplete="new-password"
+                        minlength="8" placeholder="mindestens 8 Zeichen">
+                    <small class="hint" id="backupPasswordHint">Noch nicht gesetzt — automatische Sicherungen pausieren, bis ein Passwort hinterlegt ist.</small>
+                </label>
+                <label class="checkbox">
+                    <input type="checkbox" id="setBackupPasswordShow">
+                    <span>Passwort anzeigen</span>
+                </label>
+                <div class="actions">
+                    <button class="btn primary" type="submit">Backup-Passwort speichern</button>
+                </div>
+            </form>
+
+            <h3>Tagessicherung &amp; Monatsabschluss per Mail</h3>
+            <p class="muted small">
+                Beim ersten Login eines neuen Tages bzw. Monats öffnet die App automatisch
+                den Teilen-Dialog mit den verschlüsselten Backup-Anhängen.
+                Mitarbeiter tippen nur „Mail" und „Senden", sehen keine Inhalte.
             </p>
             <form id="backupForm" class="grid">
                 <label class="checkbox">
                     <input type="checkbox" id="setBackupEnabled">
-                    <span>Tagessicherung aktiv (JSON + CSV als Anhang)</span>
+                    <span>Tagessicherung aktiv (verschlüsseltes JSON + CSV als Anhang)</span>
                 </label>
                 <label>Empfänger-E-Mail (Tagessicherung)
                     <input type="email" id="setBackupRecipient" autocomplete="off"
@@ -260,7 +279,7 @@
                 </label>
                 <label class="checkbox">
                     <input type="checkbox" id="setMonthlyEnabled">
-                    <span>Monatsabschluss-Mail aktiv (Minijob-PDF + CSV des Vormonats — zur Aufbewahrung wegen Lohn-Pflichten, 10 Jahre)</span>
+                    <span>Monatsabschluss-Mail aktiv (verschlüsseltes Minijob-PDF + CSV des Vormonats — zur Aufbewahrung wegen Lohn-Pflichten, 10 Jahre)</span>
                 </label>
                 <label>Empfänger-E-Mail (Monatsabschluss)
                     <input type="email" id="setMonthlyRecipient" autocomplete="off"
@@ -271,6 +290,25 @@
                 <div class="actions">
                     <button class="btn primary" type="submit">Einstellungen speichern</button>
                     <button class="btn" type="button" id="backupNow">Jetzt sichern</button>
+                </div>
+            </form>
+
+            <h3>Verschlüsselte Sicherung importieren</h3>
+            <p class="muted small">
+                Wähle eine empfangene <code>.enc</code>-Datei. Sie wird mit dem oben hinterlegten Backup-Passwort entschlüsselt.
+                JSON-Dateien können das komplette Daten-Backup wiederherstellen, CSV/PDF werden als Klartext-Datei heruntergeladen.
+            </p>
+            <form id="backupImportForm" class="grid">
+                <label>Verschlüsselte Datei
+                    <input type="file" id="setBackupImportFile" accept=".enc">
+                </label>
+                <label>Passwort (falls abweichend vom oben gespeicherten)
+                    <input type="password" id="setBackupImportPassword" autocomplete="off"
+                        placeholder="leer lassen = gespeichertes verwenden">
+                </label>
+                <div class="actions">
+                    <button class="btn" type="button" id="backupImportDecrypt">Entschlüsseln &amp; herunterladen</button>
+                    <button class="btn primary" type="button" id="backupImportRestore">Backup wiederherstellen (nur JSON)</button>
                 </div>
             </form>
         </div>
@@ -338,11 +376,12 @@
      entfernen. drive.js und vendor/msal-browser.min.js bleiben unverändert auf Disk. -->
 <!-- <script src="vendor/msal-browser.min.js" defer></script> -->
 
-<!-- Eigene Skripte — Reihenfolge wichtig: config → storage → app -->
+<!-- Eigene Skripte — Reihenfolge wichtig: config → crypto → storage → app -->
 <!-- Versionssuffix erzwingt Neuladen nach Updates (anstelle des Browser-Caches) -->
 <script src="config.js?v=2" defer></script>
-<script src="storage.js?v=2" defer></script>
+<script src="crypto.js?v=1" defer></script>
+<script src="storage.js?v=3" defer></script>
 <!-- <script src="drive.js?v=2" defer></script> -->
-<script src="app.js?v=2" defer></script>
+<script src="app.js?v=3" defer></script>
 </body>
 </html>

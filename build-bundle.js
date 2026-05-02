@@ -18,6 +18,7 @@ const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
 const indexHtml = read('index.html');
 const styleCss  = read('style.css');
 const cfgJs     = read('config.js');
+const cryptoJs  = read('crypto.js');
 const storageJs = read('storage.js');
 const appJs     = read('app.js');
 // DRIVE_DISABLED: const msalJs = read('vendor/msal-browser.min.js');
@@ -43,12 +44,13 @@ out = out.replace(
     lit('')
 );
 
-// 3) Lokale eigene Skripte: config -> storage -> app
+// 3) Lokale eigene Skripte: config -> crypto -> storage -> app
 //    (drive.js ist im index.html als HTML-Kommentar markiert; der Regex matcht
 //    inkl. dieses Kommentars bis zum app.js-Tag.)
 const localScriptBlock = /<!--\s*Eigene Skripte[\s\S]*?<script\s+src="app\.js[^"]*"\s+defer><\/script>/i;
-const inlineBlock = `<!-- Eingebettete Skripte: config -> storage -> app (drive deaktiviert) -->
+const inlineBlock = `<!-- Eingebettete Skripte: config -> crypto -> storage -> app (drive deaktiviert) -->
 <script>\n/* config.js */\n${cfgJs}\n</script>
+<script>\n/* crypto.js */\n${cryptoJs}\n</script>
 <script>\n/* storage.js */\n${storageJs}\n</script>
 <script>\n/* app.js */\n${appJs}\n</script>`;
 

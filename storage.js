@@ -15,6 +15,11 @@
     // damit ein importiertes Backup auf einem neuen Gerät erneut die
     // Zustimmung verlangt.
     const DSGVO_ACCEPTED_KEY = 'paraloxStunden.dsgvoAccepted';
+    // Symmetrisches Backup-Passwort für die Verschlüsselung der automatischen
+    // Backup-Anhänge (AES-GCM 256, PBKDF2). Wird vom Admin in den Settings
+    // gesetzt und gerätelokal gehalten — nicht im JSON-Backup, sonst hätte
+    // jeder, der das Backup hat, automatisch das Passwort.
+    const BACKUP_PASSWORD_KEY = 'paraloxStunden.backupPassword';
 
     const DEFAULT_SETTINGS = {
         wageSingle: 14,
@@ -194,6 +199,13 @@
         if (iso) localStorage.setItem(DSGVO_ACCEPTED_KEY, iso);
         else localStorage.removeItem(DSGVO_ACCEPTED_KEY);
     }
+    function getBackupPassword() {
+        return localStorage.getItem(BACKUP_PASSWORD_KEY) || null;
+    }
+    function setBackupPassword(pw) {
+        if (pw) localStorage.setItem(BACKUP_PASSWORD_KEY, pw);
+        else localStorage.removeItem(BACKUP_PASSWORD_KEY);
+    }
 
     function nextId(items) {
         let max = 0;
@@ -209,6 +221,7 @@
         getLastBackupDate, setLastBackupDate,
         getLastMonthlyArchive, setLastMonthlyArchive,
         getDsgvoAccepted, setDsgvoAccepted,
+        getBackupPassword, setBackupPassword,
         nextId,
     };
 })();
