@@ -24,7 +24,10 @@ function check(label, cond, detail) {
 async function setupShareMock(page, behavior = 'success') {
     await page.addInitScript((b) => {
         // DSGVO-Pflicht-Popup vorab bestätigen, sonst überlagert es den Login
-        localStorage.setItem('paraloxStunden.dsgvoAccepted', new Date().toISOString());
+        // Marker pro User-ID: alle Test-IDs als bestätigt markieren
+        const iso = new Date().toISOString();
+        localStorage.setItem('paraloxStunden.dsgvoAccepted',
+            JSON.stringify({ '1': iso, '2': iso, '99': iso }));
         // Backup-Passwort vorbelegen — sonst pausieren die Backups
         localStorage.setItem('paraloxStunden.backupPassword', 'TestPasswort12345');
 

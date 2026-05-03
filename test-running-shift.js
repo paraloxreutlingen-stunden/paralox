@@ -22,7 +22,10 @@ async function newPage(browser) {
     const page = await ctx.newPage();
     await page.addInitScript(() => {
         // Login-blockierendes DSGVO-Popup vorab als gesehen markieren
-        localStorage.setItem('paraloxStunden.dsgvoAccepted', new Date().toISOString());
+        // (Marker pro User-ID, alle Test-IDs).
+        const iso = new Date().toISOString();
+        localStorage.setItem('paraloxStunden.dsgvoAccepted',
+            JSON.stringify({ '1': iso, '2': iso, '99': iso }));
     });
     return page;
 }

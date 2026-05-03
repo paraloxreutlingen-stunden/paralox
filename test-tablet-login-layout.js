@@ -23,12 +23,12 @@ async function measure(viewport, withPinboard, label) {
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
     await page.waitForTimeout(1000);
 
-    // DSGVO-Consent vorab als bestätigt markieren — sonst würde das Pflicht-
-    // Popup beim Erstbesuch über dem Login-Formular liegen und die Layout-
-    // Messung verfälschen. Hier interessiert nur das Login-Layout selbst.
+    // DSGVO-Consent vorab für alle Test-User-IDs als bestätigt markieren —
+    // verhindert, dass das Popup nach Login erscheint und die Messung stört.
     await page.evaluate(() => {
+        const iso = new Date().toISOString();
         localStorage.setItem('paraloxStunden.dsgvoAccepted',
-            new Date().toISOString());
+            JSON.stringify({ '1': iso, '2': iso, '99': iso }));
     });
 
     if (withPinboard) {

@@ -28,7 +28,10 @@ function todayMinusDays(days) {
 async function setupAndLogin(page, role) {
     await page.addInitScript(() => {
         // DSGVO-Popup vorab bestätigen, sonst überlagert es den Login.
-        localStorage.setItem('paraloxStunden.dsgvoAccepted', new Date().toISOString());
+        // Marker pro User-ID: alle Test-IDs als bestätigt markieren
+        const iso = new Date().toISOString();
+        localStorage.setItem('paraloxStunden.dsgvoAccepted',
+            JSON.stringify({ '1': iso, '2': iso, '99': iso }));
         localStorage.setItem('paraloxStunden.backupPassword', 'TestPasswort12345');
     });
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });

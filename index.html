@@ -274,6 +274,7 @@
                 </label>
                 <div class="actions">
                     <button class="btn primary" type="submit">Speichern</button>
+                    <button class="btn ghost" type="button" id="settingsShowDsgvo">Datenschutz-Hinweis ansehen</button>
                 </div>
             </form>
             <h3>Räume &amp; Aufteilung</h3>
@@ -400,7 +401,11 @@
         <h3>Datenschutzhinweis</h3>
         <div id="dsgvoNotice"></div>
         <div class="actions">
+            <!-- Standard: Pflicht-Bestätigung beim ersten Login eines Mitarbeiters.
+                 Im "Nur ansehen"-Modus (Settings → Datenschutz-Hinweis ansehen) wird
+                 dieser Button versteckt und stattdessen "Schließen" gezeigt. -->
             <button class="btn primary" id="dsgvoConsentBtn" type="button">Verstanden, weiter</button>
+            <button class="btn ghost hidden" id="dsgvoCloseBtn" type="button">Schließen</button>
         </div>
     </div>
 </div>

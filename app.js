@@ -583,22 +583,40 @@
             });
         }
         renderLoginPinboard();
-        maybeShowDsgvoConsent();
+        // Popup wird NICHT mehr im Login-View gezeigt — der Marker liegt
+        // jetzt pro Mitarbeiter und kann erst nach erfolgreichem Login
+        // ausgewertet werden (siehe maybeShowDsgvoConsent in enterApp).
     }
 
-    /* DSGVO-Hinweis wird einmalig beim allerersten Besuch als Pflicht-Modal
-     * gezeigt. Nach Bestätigung speichert localStorage den Marker
-     * paraloxStunden.dsgvoAccepted und das Popup erscheint nie wieder.
-     * Inhalt wird vorher dynamisch passend zu den aktiven Sicherungen
-     * (Tages- / Monatsabschluss) befüllt. */
+    /* DSGVO-Hinweis als Pflicht-Modal beim ersten Login JEDES Mitarbeiters.
+     * Marker pro User-ID — Bestätigung von Owner1 entlässt nicht automatisch
+     * andere Mitarbeiter. Inhalt wird dynamisch passend zu den aktiven
+     * Sicherungen befüllt. */
     function maybeShowDsgvoConsent() {
+        if (!state.user) return;
         const modal = $('#dsgvoConsentModal');
         if (!modal) return;
-        if (window.ParaloxStorage.getDsgvoAccepted()) {
+        if (window.ParaloxStorage.getDsgvoAccepted(state.user.id)) {
             modal.classList.add('hidden');
             return;
         }
         renderDsgvoNotice();
+        // Bestätigungs-Modus: nur "Verstanden, weiter" sichtbar.
+        $('#dsgvoConsentBtn').classList.remove('hidden');
+        $('#dsgvoCloseBtn').classList.add('hidden');
+        modal.classList.remove('hidden');
+    }
+
+    /* Read-only-Variante: zeigt den aktuellen Datenschutz-Hinweis-Text,
+     * ohne Marker zu setzen. Aufgerufen aus dem Settings-Knopf — gedacht
+     * fürs Nachschlagen, ohne dass irgendwer (du oder Mitarbeiter) erneut
+     * bestätigen muss. */
+    function showDsgvoNoticeReadOnly() {
+        const modal = $('#dsgvoConsentModal');
+        if (!modal) return;
+        renderDsgvoNotice();
+        $('#dsgvoConsentBtn').classList.add('hidden');
+        $('#dsgvoCloseBtn').classList.remove('hidden');
         modal.classList.remove('hidden');
     }
 
@@ -728,6 +746,10 @@
         renderPreview();
         buildTabs();
         startIdleTimer();
+        // DSGVO-Pflicht-Popup für diesen Mitarbeiter, falls noch nicht
+        // bestätigt. Ohne Bestätigung ist die App zwar geöffnet, aber das
+        // Modal liegt darüber und blockiert die Bedienung.
+        maybeShowDsgvoConsent();
     }
 
     /* Stellt das "Neue Schicht"-Formular auf "Beenden"-Modus um, falls der
@@ -842,10 +864,24 @@
 
     $('#btnLogout').addEventListener('click', doLogout);
 
-    // DSGVO-Consent-Modal: einmal bestätigen, dann Marker setzen und schließen.
+    // DSGVO-Consent-Modal: einmal pro Mitarbeiter bestätigen, dann Marker
+    // für diese User-ID setzen und schließen.
     $('#dsgvoConsentBtn')?.addEventListener('click', () => {
-        window.ParaloxStorage.setDsgvoAccepted(new Date().toISOString());
+        if (state.user) {
+            window.ParaloxStorage.setDsgvoAccepted(state.user.id, new Date().toISOString());
+        }
         $('#dsgvoConsentModal').classList.add('hidden');
+    });
+    // Read-only "Schließen": setzt nichts, blendet das Modal nur weg.
+    $('#dsgvoCloseBtn')?.addEventListener('click', () => {
+        $('#dsgvoConsentModal').classList.add('hidden');
+        // Default-Modus für nächsten Aufruf wiederherstellen
+        $('#dsgvoConsentBtn').classList.remove('hidden');
+        $('#dsgvoCloseBtn').classList.add('hidden');
+    });
+    // Settings-Knopf "Datenschutz-Hinweis ansehen" — read-only-Anzeige
+    $('#settingsShowDsgvo')?.addEventListener('click', () => {
+        showDsgvoNoticeReadOnly();
     });
 
     // ---------- Shift Form ----------

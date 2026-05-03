@@ -211,12 +211,30 @@
         if (yyyymm) localStorage.setItem(LAST_MONTHLY_KEY, yyyymm);
         else localStorage.removeItem(LAST_MONTHLY_KEY);
     }
-    function getDsgvoAccepted() {
-        return localStorage.getItem(DSGVO_ACCEPTED_KEY) || null;
+    /* DSGVO-Bestätigung pro Mitarbeiter (employeeId → ISO-Zeitpunkt). Damit
+     * jeder Mitarbeiter den Hinweis einmal selbst bestätigen muss, nicht nur
+     * der erste der das Tablet einrichtet. Alte String-Werte (gerätespezi-
+     * fischer Marker aus früheren Versionen) werden beim ersten Lesen
+     * ignoriert — alle User sehen das Popup dann beim nächsten Login einmalig. */
+    function _readDsgvoMap() {
+        try {
+            const raw = localStorage.getItem(DSGVO_ACCEPTED_KEY);
+            if (!raw) return {};
+            const obj = JSON.parse(raw);
+            if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+            return obj;
+        } catch { return {}; }
     }
-    function setDsgvoAccepted(iso) {
-        if (iso) localStorage.setItem(DSGVO_ACCEPTED_KEY, iso);
-        else localStorage.removeItem(DSGVO_ACCEPTED_KEY);
+    function getDsgvoAccepted(employeeId) {
+        if (employeeId == null) return null;
+        return _readDsgvoMap()[String(employeeId)] || null;
+    }
+    function setDsgvoAccepted(employeeId, iso) {
+        if (employeeId == null) return;
+        const map = _readDsgvoMap();
+        if (iso) map[String(employeeId)] = iso;
+        else delete map[String(employeeId)];
+        localStorage.setItem(DSGVO_ACCEPTED_KEY, JSON.stringify(map));
     }
     function getBackupPassword() {
         return localStorage.getItem(BACKUP_PASSWORD_KEY) || null;

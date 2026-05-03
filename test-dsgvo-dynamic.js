@@ -47,9 +47,24 @@ async function seedDeviceSettings(page, dataController, recipient) {
     }, { dc: dataController, r: recipient });
 }
 
+/* Login als Default-Admin "Admin" mit Passwort "paralox" — DSGVO-Popup
+ * erscheint jetzt erst NACH dem Login (pro Mitarbeiter), nicht mehr im
+ * Login-View. */
+async function loginAsAdmin(page) {
+    await page.evaluate(() => {
+        const sel = document.getElementById('loginName');
+        const opt = Array.from(sel.options).find(o => o.textContent === 'Admin');
+        sel.value = opt.value;
+        document.getElementById('loginPassword').value = 'paralox';
+        document.getElementById('loginForm').dispatchEvent(
+            new Event('submit', { cancelable: true, bubbles: true }));
+    });
+    await page.waitForTimeout(800);
+}
+
 (async () => {
-    // -------- 1. Geräte-Setting + Empfänger gesetzt → erweiterter Text --------
-    console.log('\n=== Mit gespeichertem Empfänger + Verantwortlicher Stelle ===');
+    // -------- 1. Erstes Login: Popup erscheint NACH dem Login --------
+    console.log('\n=== Erstes Login: Pflicht-Popup erscheint nach Login ===');
     {
         const browser = await chromium.launch({ executablePath: CHROME, headless: true });
         const ctx = await browser.newContext();
@@ -58,9 +73,16 @@ async function seedDeviceSettings(page, dataController, recipient) {
         await page.waitForTimeout(500);
         await seedDeviceSettings(page, 'Test-Firma GbR, Teststraße 1, 12345 Teststadt', 'backup@example.org');
         await page.reload({ waitUntil: 'networkidle' });
-        await page.waitForTimeout(800);
-        const n = await readNotice(page);
-        check('Consent-Popup ist sichtbar (erster Besuch)',
+        await page.waitForTimeout(500);
+
+        // Popup darf VOR dem Login NICHT erscheinen
+        let n = await readNotice(page);
+        check('Vor Login: Consent-Popup ist NICHT sichtbar',
+            n.modalVisible === false);
+
+        await loginAsAdmin(page);
+        n = await readNotice(page);
+        check('Nach Login: Consent-Popup ist sichtbar',
             n.modalVisible === true);
         check('Hinweis enthält "Tagessicherung per E-Mail (aktiv)"',
             /Tagessicherung per E-Mail \(aktiv\)/.test(n.text), n.text.slice(0, 80));
@@ -75,16 +97,18 @@ async function seedDeviceSettings(page, dataController, recipient) {
         await browser.close();
     }
 
-    // -------- 1b. Consent-Klick setzt Marker und schließt Popup --------
-    console.log('\n=== Bestätigung: Marker gesetzt, Popup verschwindet, kommt nicht wieder ===');
+    // -------- 1b. Klick setzt Marker pro User, Reload → Popup bleibt weg --------
+    console.log('\n=== Bestätigung: Marker pro User-ID gesetzt, Popup kommt für DIESEN User nicht wieder ===');
     {
         const browser = await chromium.launch({ executablePath: CHROME, headless: true });
         const ctx = await browser.newContext();
         const page = await ctx.newPage();
         await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
-        await page.waitForTimeout(800);
+        await page.waitForTimeout(500);
+        await loginAsAdmin(page);
+
         let n = await readNotice(page);
-        check('Popup vor Klick sichtbar', n.modalVisible === true);
+        check('Popup nach Login sichtbar', n.modalVisible === true);
 
         await page.click('#dsgvoConsentBtn');
         await page.waitForTimeout(200);
@@ -92,16 +116,106 @@ async function seedDeviceSettings(page, dataController, recipient) {
         n = await readNotice(page);
         check('Popup nach Klick verborgen', n.modalVisible === false);
 
-        const marker = await page.evaluate(() =>
-            localStorage.getItem('paraloxStunden.dsgvoAccepted'));
-        check('Marker paraloxStunden.dsgvoAccepted gesetzt (ISO-Zeitstempel)',
-            !!marker && /^\d{4}-\d{2}-\d{2}T/.test(marker), marker);
+        const map = await page.evaluate(() =>
+            JSON.parse(localStorage.getItem('paraloxStunden.dsgvoAccepted') || '{}'));
+        check('Marker als User-ID-Map gespeichert (Admin = id 1)',
+            map['1'] && /^\d{4}-\d{2}-\d{2}T/.test(map['1']),
+            JSON.stringify(map));
 
-        // Reload → Popup darf nicht erneut erscheinen
+        // Reload → Popup darf für diesen User nicht erneut erscheinen
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(800);
         n = await readNotice(page);
-        check('Nach Reload bleibt Popup verborgen', n.modalVisible === false);
+        check('Nach Reload bleibt Popup für denselben User verborgen',
+            n.modalVisible === false);
+
+        await browser.close();
+    }
+
+    // -------- 1c. Neuer Mitarbeiter sieht Popup beim ersten Login --------
+    console.log('\n=== Zweiter Mitarbeiter: muss eigene Bestätigung leisten ===');
+    {
+        const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+        const ctx = await browser.newContext();
+        const page = await ctx.newPage();
+        await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
+        await page.waitForTimeout(500);
+
+        // Admin-Bestätigung simulieren + zweiten Mitarbeiter anlegen
+        await page.evaluate(() => {
+            localStorage.setItem('paraloxStunden.dsgvoAccepted',
+                JSON.stringify({ '1': new Date().toISOString() }));
+            const data = JSON.parse(localStorage.getItem('paraloxStunden.v1'));
+            data.employees.push({
+                id: 99, name: 'Zweite', password: 'paralox',
+                isAdmin: false, isAccountant: false, isActive: true,
+                rvBefreit: false, assignedTo: 'owner1',
+                createdAt: new Date().toISOString(),
+            });
+            localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
+        });
+        await page.reload({ waitUntil: 'networkidle' });
+        await page.waitForTimeout(500);
+
+        // Login als "Zweite"
+        await page.evaluate(() => {
+            const sel = document.getElementById('loginName');
+            const opt = Array.from(sel.options).find(o => o.textContent === 'Zweite');
+            sel.value = opt.value;
+            document.getElementById('loginPassword').value = 'paralox';
+            document.getElementById('loginForm').dispatchEvent(
+                new Event('submit', { cancelable: true, bubbles: true }));
+        });
+        await page.waitForTimeout(800);
+
+        const n = await readNotice(page);
+        check('Zweiter Mitarbeiter sieht Popup beim ersten Login',
+            n.modalVisible === true);
+
+        await browser.close();
+    }
+
+    // -------- 1d. Settings: "Datenschutz-Hinweis ansehen" zeigt nur an --------
+    console.log('\n=== Settings-Knopf "Ansehen": kein Reset, nur Anzeige ===');
+    {
+        const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+        const ctx = await browser.newContext();
+        const page = await ctx.newPage();
+        await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
+        await page.waitForTimeout(500);
+        await loginAsAdmin(page);
+        // Pflicht-Popup wegklicken
+        await page.click('#dsgvoConsentBtn');
+        await page.waitForTimeout(200);
+
+        // In Settings wechseln und Knopf klicken
+        await page.click('[data-tab="settings"]');
+        await page.waitForTimeout(200);
+        await page.click('#settingsShowDsgvo');
+        await page.waitForTimeout(200);
+
+        const st = await page.evaluate(() => ({
+            modalVisible: !document.getElementById('dsgvoConsentModal').classList.contains('hidden'),
+            consentBtnHidden: document.getElementById('dsgvoConsentBtn').classList.contains('hidden'),
+            closeBtnVisible: !document.getElementById('dsgvoCloseBtn').classList.contains('hidden'),
+        }));
+        check('Modal ist sichtbar', st.modalVisible);
+        check('"Verstanden, weiter"-Button ist im Read-Only-Modus versteckt',
+            st.consentBtnHidden);
+        check('"Schließen"-Button ist sichtbar', st.closeBtnVisible);
+
+        // Schließen → Modal verschwindet, Marker bleibt unverändert
+        const beforeMarker = await page.evaluate(() =>
+            localStorage.getItem('paraloxStunden.dsgvoAccepted'));
+        await page.click('#dsgvoCloseBtn');
+        await page.waitForTimeout(200);
+        const afterMarker = await page.evaluate(() =>
+            localStorage.getItem('paraloxStunden.dsgvoAccepted'));
+        check('Marker wurde durch "Ansehen" NICHT verändert',
+            beforeMarker === afterMarker);
+        const stEnd = await page.evaluate(() =>
+            document.getElementById('dsgvoConsentModal').classList.contains('hidden'));
+        check('Modal nach "Schließen" weg', stEnd === true);
 
         await browser.close();
     }
@@ -122,7 +236,8 @@ async function seedDeviceSettings(page, dataController, recipient) {
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
         });
         await page.reload({ waitUntil: 'networkidle' });
-        await page.waitForTimeout(800);
+        await page.waitForTimeout(500);
+        await loginAsAdmin(page);
         const n = await readNotice(page);
         check('Hinweis enthält "lokal auf diesem Gerät"',
             /lokal auf diesem Gerät/.test(n.text), n.text.slice(0, 80));
@@ -154,7 +269,8 @@ async function seedDeviceSettings(page, dataController, recipient) {
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
         });
         await page.reload({ waitUntil: 'networkidle' });
-        await page.waitForTimeout(800);
+        await page.waitForTimeout(500);
+        await loginAsAdmin(page);
         const n = await readNotice(page);
         check('Hinweis nennt neue Adresse', /andere-adresse@firma\.de/.test(n.text),
             n.text.slice(0, 100));
@@ -169,7 +285,8 @@ async function seedDeviceSettings(page, dataController, recipient) {
         const ctx = await browser.newContext();
         const page = await ctx.newPage();
         await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
-        await page.waitForTimeout(800);
+        await page.waitForTimeout(500);
+        await loginAsAdmin(page);
         const n = await readNotice(page);
         check('Hinweis erwähnt Monatsabschluss',
             /Monatsabschluss per E-Mail/.test(n.text), n.text.slice(0, 80));
