@@ -1923,6 +1923,7 @@ window.ParaloxConfig = {
         ['enter','mine','shifts','employees','settings','pinboard'].forEach(v => {
             $(`#view-${v}`).classList.toggle('hidden', v !== name);
         });
+        if (name === 'enter')     refreshShiftEmpSelect();
         if (name === 'mine')      renderMine();
         if (name === 'shifts')    renderAdminShifts();
         if (name === 'employees') renderEmployees();
@@ -2201,31 +2202,42 @@ window.ParaloxConfig = {
         $('#sfRoom').value  = '';
         $('#sfRoom2').value = '';
 
-        // Mitarbeiter-Dropdown für Admins befüllen + nur für Admins zeigen.
-        // Default: der eingeloggte Admin selbst — sonst wäre versehentliches
-        // Verbuchen auf den falschen Mitarbeiter zu leicht.
-        const empWrap = $('#sfEmpWrap');
-        const empSel = $('#sfEmp');
-        if (isAdmin()) {
-            empSel.innerHTML = '';
-            [...employees()]
-                .filter(e => e.isActive)
-                .sort((a, b) => a.name.localeCompare(b.name, 'de'))
-                .forEach(e => {
-                    const o = document.createElement('option');
-                    o.value = e.id;
-                    o.textContent = e.name;
-                    empSel.appendChild(o);
-                });
-            empSel.value = state.user.id;
-            empWrap.classList.remove('hidden');
-        } else {
-            empWrap.classList.add('hidden');
-        }
+        refreshShiftEmpSelect();
 
         renderPreview();
         buildTabs();
         startIdleTimer();
+    }
+
+    /* Befüllt das Mitarbeiter-Dropdown im "Neue Schicht"-Formular für Admins.
+     * Muss nach JEDER Änderung an der Mitarbeiter-Liste neu laufen — nicht
+     * nur einmal beim Login —, sonst fehlen frisch angelegte Mitarbeiter im
+     * Dropdown bis zum nächsten Login. Aktuell aufgerufen aus enterApp(),
+     * beim Tab-Wechsel auf 'enter' und nach jedem Mitarbeiter-Anlegen.
+     * Default-Auswahl: der eingeloggte Admin selbst, damit nicht
+     * versehentlich auf einen falschen Mitarbeiter verbucht wird. */
+    function refreshShiftEmpSelect() {
+        const empWrap = $('#sfEmpWrap');
+        const empSel = $('#sfEmp');
+        if (!empWrap || !empSel) return;
+        if (!isAdmin()) {
+            empWrap.classList.add('hidden');
+            return;
+        }
+        const prev = empSel.value;
+        empSel.innerHTML = '';
+        [...employees()]
+            .filter(e => e.isActive)
+            .sort((a, b) => a.name.localeCompare(b.name, 'de'))
+            .forEach(e => {
+                const o = document.createElement('option');
+                o.value = e.id;
+                o.textContent = e.name;
+                empSel.appendChild(o);
+            });
+        const stillExists = [...empSel.options].some(o => o.value === prev);
+        empSel.value = stillExists && prev ? prev : String(state.user.id);
+        empWrap.classList.remove('hidden');
     }
 
     $('#btnLogout').addEventListener('click', doLogout);
@@ -3240,6 +3252,8 @@ window.ParaloxConfig = {
         $('#empAssigned').value = 'owner1';
         toast('Mitarbeiter angelegt', 'success');
         renderEmployees();
+        // Frisch angelegter Mitarbeiter sofort im Schicht-Dropdown verfügbar.
+        refreshShiftEmpSelect();
     });
 
     // ---------- Einstellungen ----------
