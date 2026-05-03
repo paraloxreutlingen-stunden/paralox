@@ -68,7 +68,7 @@ async function setupAndLogin(page, role) {
         arr.forEach(s => data.shifts.push({
             id: s.id, employeeId: s.uid, date: dateOf(s.days),
             startTime: '10:00', endTime: '14:00',
-            room: 'FP', secondRoom: null, isDouble: false, note: '',
+            room: 'R1', secondRoom: null, isDouble: false, note: '',
             createdAt: new Date().toISOString(),
         }));
         localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));

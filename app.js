@@ -603,20 +603,26 @@
     }
 
     /* Befüllt #dsgvoNotice (im Consent-Modal) mit dem auf die aktuellen
-     * Sicherungs-Einstellungen abgestimmten Text. */
-    const VERANTWORTLICH = 'Beispiel GbR, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen · Owner2 Schmid, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen';
+     * Sicherungs-Einstellungen abgestimmten Text. Verantwortliche Stelle
+     * kommt aus settings.dataController — wird vom Admin in Settings
+     * gepflegt, damit der Quellcode keine Adressen leakt. Wenn leer:
+     * "Verantwortlich"-Zeile wird ausgelassen statt Müll anzuzeigen. */
     function renderDsgvoNotice() {
         const el = $('#dsgvoNotice');
         if (!el) return;
         const cfg = settings()?.dailyBackup || {};
         const mcfg = settings()?.monthlyArchive || {};
+        const dataController = (settings()?.dataController || '').trim();
+        const verantwortlichLine = dataController
+            ? `<p>Verantwortlich: ${escapeHtml(dataController)}</p>`
+            : '';
         const dailyOn = !!cfg.enabled;
         const monthlyOn = !!mcfg.enabled;
 
         if (!dailyOn && !monthlyOn) {
             el.innerHTML =
                 '<p>Die erfassten Arbeitszeiten werden ausschließlich lokal auf diesem Gerät gespeichert. Es findet keine Übertragung an externe Dienste statt. Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>' +
-                `<p>Verantwortlich: ${escapeHtml(VERANTWORTLICH)}</p>`;
+                verantwortlichLine;
             return;
         }
 
@@ -636,8 +642,8 @@
                     `an <strong>${escapeHtml(mrecipient || '— nicht konfiguriert —')}</strong> versendet`) +
                 '. Diese Mail dient der Aufbewahrungspflicht für Lohnunterlagen (10 Jahre, § 147 AO).</p>';
         }
-        html += '<p>Auftragsverarbeiter ist 1&amp;1 Mail &amp; Media GmbH (GMX, Deutschland) sowie der Mail-Anbieter des Endgeräts. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an der Datensicherung gegen Geräteverlust und an der gesetzlichen Aufbewahrungspflicht). Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>';
-        html += `<p>Verantwortlich: ${escapeHtml(VERANTWORTLICH)}</p>`;
+        html += '<p>Die Backup-Anhänge werden vor dem Versand clientseitig mit AES-256 verschlüsselt — der Mail-Anbieter (1&amp;1 Mail &amp; Media GmbH / GMX, Deutschland) hat keinen Klartext-Zugriff. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an der Datensicherung gegen Geräteverlust und an der gesetzlichen Aufbewahrungspflicht). Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>';
+        html += verantwortlichLine;
         el.innerHTML = html;
     }
 
@@ -1277,6 +1283,16 @@
         const e = employees().find(x => x.id === id);
         return e ? e.name : `#${id}`;
     }
+    /* Anzeige-Label für den Arbeitgeber/Eigentümer eines Mitarbeiters.
+     * Wird in der Mitarbeiter-Liste, im Minijob-PDF und in Toasts verwendet.
+     * Texte stehen in settings.labels und werden vom Admin in Settings
+     * gepflegt — der Code enthält nur generische Defaults. */
+    function ownerLabel(assignedTo) {
+        const labels = settings()?.labels || {};
+        return assignedTo === 'owner2'
+            ? (labels.owner2 || 'Eigentümer 2')
+            : (labels.owner1 || 'Eigentümer 1');
+    }
     function empAssignment(id) {
         const e = employees().find(x => x.id === id);
         return (e && e.assignedTo) || 'owner1';
@@ -1702,9 +1718,7 @@
         targetEmps.forEach((entry, idx) => {
             if (idx > 0) doc.addPage();
             const { emp, list } = entry;
-            const arbeitgeber = emp.assignedTo === 'owner2'
-                ? 'Owner2 Schmid'
-                : 'Beispiel GbR';
+            const arbeitgeber = ownerLabel(emp.assignedTo);
 
             doc.setFontSize(16); doc.setTextColor(0);
             doc.text('Stundenliste Minijob', 40, 50);
@@ -1789,6 +1803,18 @@
         const admin = isAdmin();
         $('#empForm').classList.toggle('hidden', !admin);
         $('#empCreateTitle').classList.toggle('hidden', !admin);
+        // Eigentümer-Auswahl mit den Labels aus Settings befüllen, damit
+        // im Form die echten Bezeichnungen aus dem Tablet erscheinen,
+        // nicht die generischen Defaults aus dem öffentlichen Code.
+        const labels = settings()?.labels || {};
+        const sel = $('#empAssigned');
+        if (sel) {
+            const prev = sel.value;
+            sel.innerHTML =
+                `<option value="owner1">${escapeHtml(labels.owner1 || 'Eigentümer 1')}</option>` +
+                `<option value="owner2">${escapeHtml(labels.owner2 || 'Eigentümer 2')}</option>`;
+            if (prev) sel.value = prev;
+        }
         tbody.innerHTML = '';
         [...employees()].sort((a,b)=>a.name.localeCompare(b.name,'de')).forEach(e => {
             const roleBadge = e.isAdmin
@@ -1796,9 +1822,7 @@
                 : e.isAccountant
                     ? '<span class="badge">Buchhaltung</span>'
                     : '<span class="badge muted">Mitarbeiter</span>';
-            const arbeitgeberLabel = e.assignedTo === 'owner2'
-                ? 'Owner2 Schmid'
-                : 'Beispiel GbR';
+            const arbeitgeberLabel = ownerLabel(e.assignedTo);
             const rvBadge = e.rvBefreit
                 ? '<span class="badge muted" title="Befreit — kein RV-Anteil-Abzug">RV-befreit</span>'
                 : '<span class="badge" title="RV-pflichtig — AN-Anteil wird vom Lohn abgezogen">RV-pflichtig</span>';
@@ -1863,7 +1887,7 @@
             const emp = employees().find(x => x.id === Number(b.dataset.empAssign));
             emp.assignedTo = emp.assignedTo === 'owner2' ? 'owner1' : 'owner2';
             saveData();
-            const label = emp.assignedTo === 'owner2' ? 'Owner2 Schmid' : 'Beispiel GbR';
+            const label = ownerLabel(emp.assignedTo);
             toast(`Arbeitgeber: ${label}`, 'success');
             renderEmployees();
         });
@@ -1980,6 +2004,10 @@
         $('#setSingle').value = settings().wageSingle;
         $('#setDouble').value = settings().wageDouble;
         $('#setRvAnteil').value = settings().rvAnteilProzent;
+        const labels = settings().labels || {};
+        $('#setLabelOwner1').value = labels.owner1 || '';
+        $('#setLabelOwner2').value = labels.owner2 || '';
+        $('#setDataController').value = settings().dataController || '';
         const cfg = settings().dailyBackup || {};
         $('#setBackupEnabled').checked = !!cfg.enabled;
         $('#setBackupRecipient').value = cfg.recipient || '';
@@ -2294,6 +2322,13 @@
         settings().wageDouble = Math.max(0, Number($('#setDouble').value) || 0);
         const rv = Number($('#setRvAnteil').value);
         settings().rvAnteilProzent = (isFinite(rv) && rv >= 0 && rv <= 20) ? rv : 3.6;
+        // Labels und Verantwortliche Stelle (für DSGVO + Listen / PDF) — werden
+        // in den öffentlichen Quellcode bewusst NICHT hartkodiert, sondern hier
+        // pro Gerät gepflegt.
+        if (!settings().labels) settings().labels = {};
+        settings().labels.owner1 = $('#setLabelOwner1').value.trim();
+        settings().labels.owner2 = $('#setLabelOwner2').value.trim();
+        settings().dataController = $('#setDataController').value.trim();
         saveData();
         renderPreview();
         toast('Einstellungen gespeichert', 'success');

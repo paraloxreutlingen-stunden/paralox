@@ -28,13 +28,14 @@ async function newPage(browser) {
 }
 
 async function loginAsOwner1(page) {
-    // Falls bereits eingeloggt (sessionStorage): kein Login mehr nötig.
+    // "Owner1" gibt es im Default-Seed nicht mehr — der einzige initiale
+    // User ist "Admin" mit Passwort "paralox".
     const alreadyIn = await page.evaluate(() =>
         document.getElementById('view-login')?.classList.contains('hidden'));
     if (alreadyIn) return;
     await page.evaluate(() => {
         const sel = document.getElementById('loginName');
-        const opt = Array.from(sel.options).find(o => o.textContent === 'Owner1');
+        const opt = Array.from(sel.options).find(o => o.textContent === 'Admin');
         sel.value = opt.value;
         document.getElementById('loginPassword').value = 'paralox';
         document.getElementById('loginForm').dispatchEvent(
@@ -90,7 +91,7 @@ async function fillForm(page, vals) {
         check('Start: "Schicht beenden"-Button versteckt', st.endHidden);
         check('Start: Topbar-Indikator versteckt', st.indicatorHidden);
 
-        await fillForm(page, { start: '10:00', room: 'FP', note: 'Schichtbeginn' });
+        await fillForm(page, { start: '10:00', room: 'R1', note: 'Schichtbeginn' });
         await page.click('#sfStartBtn');
         await page.waitForTimeout(400);
 
@@ -98,7 +99,7 @@ async function fillForm(page, vals) {
         const open = await page.evaluate(() =>
             JSON.parse(localStorage.getItem('paraloxStunden.runningShifts') || '{}'));
         check('localStorage: offene Schicht für Owner1 (id=1) gespeichert',
-            open['1'] && open['1'].startTime === '10:00' && open['1'].room === 'FP',
+            open['1'] && open['1'].startTime === '10:00' && open['1'].room === 'R1',
             JSON.stringify(open));
 
         st = await page.evaluate(() => ({
@@ -148,9 +149,9 @@ async function fillForm(page, vals) {
             const open = JSON.parse(localStorage.getItem('paraloxStunden.runningShifts') || '{}');
             return { last, openCount: Object.keys(open).length };
         });
-        check('Schicht in shifts gespeichert (Beginn 10:00, Ende 14:30, Raum FP)',
+        check('Schicht in shifts gespeichert (Beginn 10:00, Ende 14:30, Raum R1)',
             result.last && result.last.startTime === '10:00' && result.last.endTime === '14:30'
-                && result.last.room === 'FP' && result.last.employeeId === 1,
+                && result.last.room === 'R1' && result.last.employeeId === 1,
             JSON.stringify(result.last));
         check('Notiz vom Start übernommen (Schichtbeginn)',
             result.last && result.last.note === 'Schichtbeginn',
@@ -168,12 +169,12 @@ async function fillForm(page, vals) {
         await page.waitForTimeout(500);
         await loginAsOwner1(page);
 
-        await fillForm(page, { start: '11:00', room: 'FP' });
+        await fillForm(page, { start: '11:00', room: 'R1' });
         await page.click('#sfStartBtn');
         await page.waitForTimeout(400);
 
         // Beim Beenden: Doppelüberwachung aktivieren + zweiten Raum wählen
-        await fillForm(page, { isDouble: true, room2: 'SL', end: '15:00' });
+        await fillForm(page, { isDouble: true, room2: 'R2', end: '15:00' });
         await page.waitForTimeout(200);
         await page.click('#sfEndBtn');
         await page.waitForTimeout(400);
@@ -183,7 +184,7 @@ async function fillForm(page, vals) {
             return data.shifts[data.shifts.length - 1];
         });
         check('Schicht ist als Doppel gespeichert', last && last.isDouble === true, JSON.stringify(last));
-        check('Zweiter Raum ist SL', last && last.secondRoom === 'SL');
+        check('Zweiter Raum ist R2', last && last.secondRoom === 'R2');
 
         await page.context().close();
     }
@@ -196,7 +197,7 @@ async function fillForm(page, vals) {
         await page.waitForTimeout(500);
         await loginAsOwner1(page);
 
-        await fillForm(page, { start: '09:00', room: 'FP' });
+        await fillForm(page, { start: '09:00', room: 'R1' });
         await page.click('#sfStartBtn');
         await page.waitForTimeout(300);
 

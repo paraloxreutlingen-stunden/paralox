@@ -32,28 +32,46 @@ async function readNotice(page) {
     });
 }
 
+/* Vor jedem Test-Szenario gerätespezifische Werte (Empfänger, Verantwortliche
+ * Stelle) ins localStorage schreiben — der öffentliche Quellcode enthält diese
+ * Werte bewusst NICHT mehr (kein Daten-Leak via GitHub). */
+async function seedDeviceSettings(page, dataController, recipient) {
+    await page.evaluate(({ dc, r }) => {
+        const data = JSON.parse(localStorage.getItem('paraloxStunden.v1'));
+        data.settings.dataController = dc;
+        if (r !== null) {
+            data.settings.dailyBackup.recipient = r;
+            data.settings.monthlyArchive.recipient = r;
+        }
+        localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
+    }, { dc: dataController, r: recipient });
+}
+
 (async () => {
-    // -------- 1. Default-Zustand: enabled=true mit gmx-Adresse --------
-    console.log('\n=== Default (enabled=true, backup@example.org) ===');
+    // -------- 1. Geräte-Setting + Empfänger gesetzt → erweiterter Text --------
+    console.log('\n=== Mit gespeichertem Empfänger + Verantwortlicher Stelle ===');
     {
         const browser = await chromium.launch({ executablePath: CHROME, headless: true });
         const ctx = await browser.newContext();
         const page = await ctx.newPage();
         await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
+        await page.waitForTimeout(500);
+        await seedDeviceSettings(page, 'Test-Firma GbR, Teststraße 1, 12345 Teststadt', 'backup@example.org');
+        await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(800);
         const n = await readNotice(page);
-        check('Consent-Popup ist beim allerersten Besuch sichtbar',
+        check('Consent-Popup ist sichtbar (erster Besuch)',
             n.modalVisible === true);
         check('Hinweis enthält "Tagessicherung per E-Mail (aktiv)"',
             /Tagessicherung per E-Mail \(aktiv\)/.test(n.text), n.text.slice(0, 80));
-        check('Hinweis enthält backup@example.org',
+        check('Hinweis enthält den gerätespezifischen Empfänger',
             /backup@example\.org/.test(n.text));
         check('Hinweis nennt Auftragsverarbeiter (1&1 / GMX)',
             /1&1|GMX/.test(n.text));
         check('Hinweis nennt Rechtsgrundlage Art. 6 Abs. 1 lit. f',
             /Art\.\s*6\s*Abs\.\s*1\s*lit\.\s*f/.test(n.text));
-        check('Hinweis enthält Verantwortlichen (Beispiel…)',
-            /Beispiel GbR/.test(n.text));
+        check('Hinweis enthält die gerätespezifische Verantwortliche Stelle',
+            /Test-Firma GbR/.test(n.text));
         await browser.close();
     }
 
@@ -100,6 +118,7 @@ async function readNotice(page) {
             const data = JSON.parse(localStorage.getItem('paraloxStunden.v1'));
             data.settings.dailyBackup.enabled = false;
             data.settings.monthlyArchive.enabled = false;
+            data.settings.dataController = 'Test-Firma GbR';
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
         });
         await page.reload({ waitUntil: 'networkidle' });
@@ -113,8 +132,8 @@ async function readNotice(page) {
             !/GMX|1&1/.test(n.text));
         check('Hinweis erwähnt KEINEN Empfänger backup@example.org',
             !/backup@example\.org/.test(n.text));
-        check('Hinweis enthält Verantwortlichen',
-            /Beispiel GbR/.test(n.text));
+        check('Hinweis enthält den gerätespezifischen Verantwortlichen',
+            /Test-Firma GbR/.test(n.text));
         await browser.close();
     }
 

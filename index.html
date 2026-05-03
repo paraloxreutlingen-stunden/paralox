@@ -215,9 +215,11 @@
                     <input type="password" id="empPw" required minlength="8" autocomplete="new-password">
                 </label>
                 <label>Arbeitgeber (für Minijob-PDF)
+                    <!-- Optionen werden in app.js dynamisch befüllt aus
+                         settings.labels — keine echten Personennamen im HTML. -->
                     <select id="empAssigned">
-                        <option value="owner1">Beispiel GbR</option>
-                        <option value="owner2">Owner2 Schmid</option>
+                        <option value="owner1">Eigentümer 1</option>
+                        <option value="owner2">Eigentümer 2</option>
                     </select>
                 </label>
                 <label class="checkbox">
@@ -251,6 +253,20 @@
                 </label>
                 <label>Stundenlohn Doppelüberwachung (EUR)
                     <input type="number" step="0.01" min="0" id="setDouble" required>
+                </label>
+                <label>Eigentümer-Label 1 (für Räume mit Anteil „owner1")
+                    <input type="text" id="setLabelOwner1" autocomplete="off"
+                        placeholder="z.B. Firma X GmbH">
+                    <small class="hint">Wird in Listen, Minijob-PDF und im Mitarbeiter-Form angezeigt.</small>
+                </label>
+                <label>Eigentümer-Label 2 (für Räume mit Anteil „owner2")
+                    <input type="text" id="setLabelOwner2" autocomplete="off"
+                        placeholder="z.B. Vorname Nachname">
+                </label>
+                <label class="full">Verantwortliche Stelle (für DSGVO-Hinweis)
+                    <input type="text" id="setDataController" autocomplete="off"
+                        placeholder="z.B. Firma X GmbH, Straße 1, 12345 Stadt">
+                    <small class="hint">Erscheint im Datenschutz-Popup. Leer lassen blendet die Zeile aus.</small>
                 </label>
                 <label>Rentenversicherungs-Anteil Arbeitnehmer (%)
                     <input type="number" step="0.01" min="0" max="20" id="setRvAnteil" required>

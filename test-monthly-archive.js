@@ -71,9 +71,11 @@ function previousMonthYYYYMM() {
 }
 
 async function loginAsOwner1(page) {
+    // "Owner1" gibt es im Default-Seed nicht mehr — der einzige initiale
+    // User ist "Admin" mit Passwort "paralox".
     await page.evaluate(() => {
         const sel = document.getElementById('loginName');
-        const opt = Array.from(sel.options).find(o => o.textContent === 'Owner1');
+        const opt = Array.from(sel.options).find(o => o.textContent === 'Admin');
         sel.value = opt.value;
         document.getElementById('loginPassword').value = 'paralox';
         document.getElementById('loginForm').dispatchEvent(
@@ -98,7 +100,7 @@ async function loginAsOwner1(page) {
             data.shifts.push({
                 id: 7001, employeeId: 1, date: pm + '-15',
                 startTime: '10:00', endTime: '14:00',
-                room: 'FP', secondRoom: null, isDouble: false, note: 'Vormonats-Schicht',
+                room: 'R1', secondRoom: null, isDouble: false, note: 'Vormonats-Schicht',
                 createdAt: new Date().toISOString(),
             });
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
@@ -175,7 +177,7 @@ async function loginAsOwner1(page) {
             data.shifts.push({
                 id: 7099, employeeId: 1, date: pm + '-15',
                 startTime: '10:00', endTime: '14:00',
-                room: 'FP', secondRoom: null, isDouble: false, note: '',
+                room: 'R1', secondRoom: null, isDouble: false, note: '',
                 createdAt: new Date().toISOString(),
             });
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
@@ -230,7 +232,7 @@ async function loginAsOwner1(page) {
             data.shifts.push({
                 id: 7002, employeeId: 1, date: pm + '-10',
                 startTime: '10:00', endTime: '14:00',
-                room: 'FP', secondRoom: null, isDouble: false, note: '',
+                room: 'R1', secondRoom: null, isDouble: false, note: '',
                 createdAt: new Date().toISOString(),
             });
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
@@ -268,7 +270,7 @@ async function loginAsOwner1(page) {
             data.shifts.push({
                 id: 7003, employeeId: 1, date: pm + '-15',
                 startTime: '10:00', endTime: '14:00',
-                room: 'FP', secondRoom: null, isDouble: false, note: '',
+                room: 'R1', secondRoom: null, isDouble: false, note: '',
                 createdAt: new Date().toISOString(),
             });
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));

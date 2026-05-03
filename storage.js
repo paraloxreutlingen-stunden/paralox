@@ -27,65 +27,65 @@
     // Mitarbeiter zur Zeit; muss erst beendet werden, bevor eine neue startet.
     const RUNNING_SHIFTS_KEY = 'paraloxStunden.runningShifts';
 
+    /* WICHTIG: Diese Defaults landen im öffentlichen Quellcode auf GitHub.
+     * Hier KEINE business-spezifischen Werte (Stundenlöhne, Mitarbeiter-
+     * Namen, Adresse, Räume) hardcoden — das wären sonst Daten-Lecks.
+     * Generische Platzhalter, die der Admin auf seinem Gerät einmalig in
+     * den Settings überschreibt. Bestehende Geräte mit echten Werten in
+     * localStorage sind nicht betroffen — Object.assign in normalize()
+     * lässt vorhandene Werte stehen. */
     const DEFAULT_SETTINGS = {
-        wageSingle: 14,
-        wageDouble: 19,
+        wageSingle: 0,
+        wageDouble: 0,
         abgabenPercent: 31.17,
-        // Arbeitnehmer-Anteil zur gesetzlichen Rentenversicherung in Prozent vom
-        // Brutto. Wird vom Lohn abgezogen und an die Minijob-Zentrale abgeführt,
-        // wenn der Mitarbeiter nicht von der RV-Pflicht befreit ist. Stand 2026:
-        // 18,6% allgemeiner Beitrag minus 15% AG-Pauschale = 3,6% AN-Anteil.
+        // Arbeitnehmer-Anteil zur gesetzlichen Rentenversicherung in Prozent
+        // vom Brutto. Stand 2026: 18,6 % minus 15 % AG-Pauschale = 3,6 %.
         rvAnteilProzent: 3.6,
-        // Tagessicherung per Mail (Web Share / mailto-Fallback). Greift beim
-        // ersten Login eines neuen Tages. Default aktiv mit der dedizierten
-        // Backup-Adresse backup@example.org — der Owner kann das im
-        // Settings-Tab abschalten oder die Adresse ändern.
+        // Tagessicherung per Mail. Empfänger ist gerätespezifisch — Admin
+        // trägt seine eigene Backup-Adresse in den Settings ein.
         dailyBackup: {
             enabled: true,
-            recipient: 'backup@example.org',
+            recipient: '',
         },
-        // Monatsabschluss-Mail beim ersten Login eines neuen Monats:
-        // Minijob-PDF + CSV des Vormonats + JSON-Backup. Wird zum
-        // dauerhaften Archivieren wegen Lohn-Aufbewahrungspflicht (10 Jahre,
-        // § 147 AO) gedacht. Empfänger ist standardmäßig der gleiche wie
-        // dailyBackup.recipient, kann aber separat eingestellt werden.
+        // Monatsabschluss-Mail (Vormonat archivieren wegen Lohn-Aufbewahrungs-
+        // pflicht, 10 Jahre, § 147 AO).
         monthlyArchive: {
             enabled: true,
-            recipient: 'backup@example.org',
+            recipient: '',
         },
+        // Generische Platzhalter-Räume mit 50/50-Aufteilung. Auf existierenden
+        // Geräten werden die echten Räume aus localStorage NICHT überschrieben
+        // (siehe Sonderbehandlung in normalize()).
         rooms: {
-            FP: { name: 'Raum 1',        owner1: 100, owner2: 0   },
-            SL: { name: 'Raum 3',  owner1: 100, owner2: 0   },
-            BO: { name: 'Raum 4',  owner1: 100, owner2: 0   },
-            VS: { name: 'Raum 2',          owner1: 0,   owner2: 100 },
-            PB: { name: 'Raum 5',        owner1: 0,   owner2: 100 },
-            WS: { name: 'Raum 6',         owner1: 50,  owner2: 50  },
+            R1: { name: 'Raum 1', owner1: 50, owner2: 50 },
+            R2: { name: 'Raum 2', owner1: 50, owner2: 50 },
         },
         doubleSplit: { main: 50, owner1: 25, owner2: 25 },
+        // Für DSGVO-Hinweis und Listen/PDFs sichtbare Bezeichnungen. Werden
+        // vom Admin in Settings befüllt — Defaults sind generisch, damit der
+        // Quellcode keine echten Personen/Firmen-Namen leakt.
+        dataController: '',
+        labels: {
+            owner1: 'Eigentümer 1',
+            owner2: 'Eigentümer 2',
+        },
     };
 
+    /* Seed nur für die allererste Installation eines neuen Geräts. Ein
+     * generischer Admin mit Default-Passwort, damit der Owner sich erstmals
+     * einloggen und alle echten Mitarbeiter anlegen kann. WICHTIG: das
+     * Passwort sofort nach erstem Login ändern. */
     const DEFAULT_STATE = {
         employees: [
             {
                 id: 1,
-                name: 'Owner1',
+                name: 'Admin',
                 password: 'paralox',
                 isAdmin: true,
                 isAccountant: false,
                 isActive: true,
                 rvBefreit: false,
                 assignedTo: 'owner1',
-                createdAt: new Date().toISOString(),
-            },
-            {
-                id: 2,
-                name: 'Owner2',
-                password: 'paralox',
-                isAdmin: true,
-                isAccountant: false,
-                isActive: true,
-                rvBefreit: false,
-                assignedTo: 'owner2',
                 createdAt: new Date().toISOString(),
             },
         ],
@@ -120,7 +120,20 @@
         data.employees = Array.isArray(data.employees) ? data.employees : [];
         data.shifts    = Array.isArray(data.shifts) ? data.shifts : [];
         data.settings  = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
-        data.settings.rooms = Object.assign({}, DEFAULT_SETTINGS.rooms, data.settings.rooms || {});
+        // Räume NICHT mit Defaults mergen — sonst würden bei vorhandenen
+        // echten Räumen die generischen Platzhalter R1/R2 zusätzlich
+        // erscheinen. Defaults nur, wenn rooms ganz fehlt oder leer ist.
+        const existingRooms = data.settings.rooms || {};
+        data.settings.rooms = Object.keys(existingRooms).length > 0
+            ? existingRooms
+            : Object.assign({}, DEFAULT_SETTINGS.rooms);
+        // Labels (Anzeige-Namen für die Eigentümer in Listen/PDF) — Defaults
+        // füllen fehlende Felder, vorhandene Werte bleiben.
+        data.settings.labels = Object.assign(
+            {}, DEFAULT_SETTINGS.labels, data.settings.labels || {});
+        if (typeof data.settings.dataController !== 'string') {
+            data.settings.dataController = '';
+        }
         if (typeof data.settings.rvAnteilProzent !== 'number' || isNaN(data.settings.rvAnteilProzent)) {
             data.settings.rvAnteilProzent = DEFAULT_SETTINGS.rvAnteilProzent;
         }

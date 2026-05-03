@@ -987,9 +987,11 @@ tr.editing td {
                     <input type="password" id="empPw" required minlength="8" autocomplete="new-password">
                 </label>
                 <label>Arbeitgeber (für Minijob-PDF)
+                    <!-- Optionen werden in app.js dynamisch befüllt aus
+                         settings.labels — keine echten Personennamen im HTML. -->
                     <select id="empAssigned">
-                        <option value="owner1">Beispiel GbR</option>
-                        <option value="owner2">Owner2 Schmid</option>
+                        <option value="owner1">Eigentümer 1</option>
+                        <option value="owner2">Eigentümer 2</option>
                     </select>
                 </label>
                 <label class="checkbox">
@@ -1023,6 +1025,20 @@ tr.editing td {
                 </label>
                 <label>Stundenlohn Doppelüberwachung (EUR)
                     <input type="number" step="0.01" min="0" id="setDouble" required>
+                </label>
+                <label>Eigentümer-Label 1 (für Räume mit Anteil „owner1")
+                    <input type="text" id="setLabelOwner1" autocomplete="off"
+                        placeholder="z.B. Firma X GmbH">
+                    <small class="hint">Wird in Listen, Minijob-PDF und im Mitarbeiter-Form angezeigt.</small>
+                </label>
+                <label>Eigentümer-Label 2 (für Räume mit Anteil „owner2")
+                    <input type="text" id="setLabelOwner2" autocomplete="off"
+                        placeholder="z.B. Vorname Nachname">
+                </label>
+                <label class="full">Verantwortliche Stelle (für DSGVO-Hinweis)
+                    <input type="text" id="setDataController" autocomplete="off"
+                        placeholder="z.B. Firma X GmbH, Straße 1, 12345 Stadt">
+                    <small class="hint">Erscheint im Datenschutz-Popup. Leer lassen blendet die Zeile aus.</small>
                 </label>
                 <label>Rentenversicherungs-Anteil Arbeitnehmer (%)
                     <input type="number" step="0.01" min="0" max="20" id="setRvAnteil" required>
@@ -1346,65 +1362,65 @@ window.ParaloxConfig = {
     // Mitarbeiter zur Zeit; muss erst beendet werden, bevor eine neue startet.
     const RUNNING_SHIFTS_KEY = 'paraloxStunden.runningShifts';
 
+    /* WICHTIG: Diese Defaults landen im öffentlichen Quellcode auf GitHub.
+     * Hier KEINE business-spezifischen Werte (Stundenlöhne, Mitarbeiter-
+     * Namen, Adresse, Räume) hardcoden — das wären sonst Daten-Lecks.
+     * Generische Platzhalter, die der Admin auf seinem Gerät einmalig in
+     * den Settings überschreibt. Bestehende Geräte mit echten Werten in
+     * localStorage sind nicht betroffen — Object.assign in normalize()
+     * lässt vorhandene Werte stehen. */
     const DEFAULT_SETTINGS = {
-        wageSingle: 14,
-        wageDouble: 19,
+        wageSingle: 0,
+        wageDouble: 0,
         abgabenPercent: 31.17,
-        // Arbeitnehmer-Anteil zur gesetzlichen Rentenversicherung in Prozent vom
-        // Brutto. Wird vom Lohn abgezogen und an die Minijob-Zentrale abgeführt,
-        // wenn der Mitarbeiter nicht von der RV-Pflicht befreit ist. Stand 2026:
-        // 18,6% allgemeiner Beitrag minus 15% AG-Pauschale = 3,6% AN-Anteil.
+        // Arbeitnehmer-Anteil zur gesetzlichen Rentenversicherung in Prozent
+        // vom Brutto. Stand 2026: 18,6 % minus 15 % AG-Pauschale = 3,6 %.
         rvAnteilProzent: 3.6,
-        // Tagessicherung per Mail (Web Share / mailto-Fallback). Greift beim
-        // ersten Login eines neuen Tages. Default aktiv mit der dedizierten
-        // Backup-Adresse backup@example.org — der Owner kann das im
-        // Settings-Tab abschalten oder die Adresse ändern.
+        // Tagessicherung per Mail. Empfänger ist gerätespezifisch — Admin
+        // trägt seine eigene Backup-Adresse in den Settings ein.
         dailyBackup: {
             enabled: true,
-            recipient: 'backup@example.org',
+            recipient: '',
         },
-        // Monatsabschluss-Mail beim ersten Login eines neuen Monats:
-        // Minijob-PDF + CSV des Vormonats + JSON-Backup. Wird zum
-        // dauerhaften Archivieren wegen Lohn-Aufbewahrungspflicht (10 Jahre,
-        // § 147 AO) gedacht. Empfänger ist standardmäßig der gleiche wie
-        // dailyBackup.recipient, kann aber separat eingestellt werden.
+        // Monatsabschluss-Mail (Vormonat archivieren wegen Lohn-Aufbewahrungs-
+        // pflicht, 10 Jahre, § 147 AO).
         monthlyArchive: {
             enabled: true,
-            recipient: 'backup@example.org',
+            recipient: '',
         },
+        // Generische Platzhalter-Räume mit 50/50-Aufteilung. Auf existierenden
+        // Geräten werden die echten Räume aus localStorage NICHT überschrieben
+        // (siehe Sonderbehandlung in normalize()).
         rooms: {
-            FP: { name: 'Raum 1',        owner1: 100, owner2: 0   },
-            SL: { name: 'Raum 3',  owner1: 100, owner2: 0   },
-            BO: { name: 'Raum 4',  owner1: 100, owner2: 0   },
-            VS: { name: 'Raum 2',          owner1: 0,   owner2: 100 },
-            PB: { name: 'Raum 5',        owner1: 0,   owner2: 100 },
-            WS: { name: 'Raum 6',         owner1: 50,  owner2: 50  },
+            R1: { name: 'Raum 1', owner1: 50, owner2: 50 },
+            R2: { name: 'Raum 2', owner1: 50, owner2: 50 },
         },
         doubleSplit: { main: 50, owner1: 25, owner2: 25 },
+        // Für DSGVO-Hinweis und Listen/PDFs sichtbare Bezeichnungen. Werden
+        // vom Admin in Settings befüllt — Defaults sind generisch, damit der
+        // Quellcode keine echten Personen/Firmen-Namen leakt.
+        dataController: '',
+        labels: {
+            owner1: 'Eigentümer 1',
+            owner2: 'Eigentümer 2',
+        },
     };
 
+    /* Seed nur für die allererste Installation eines neuen Geräts. Ein
+     * generischer Admin mit Default-Passwort, damit der Owner sich erstmals
+     * einloggen und alle echten Mitarbeiter anlegen kann. WICHTIG: das
+     * Passwort sofort nach erstem Login ändern. */
     const DEFAULT_STATE = {
         employees: [
             {
                 id: 1,
-                name: 'Owner1',
+                name: 'Admin',
                 password: 'paralox',
                 isAdmin: true,
                 isAccountant: false,
                 isActive: true,
                 rvBefreit: false,
                 assignedTo: 'owner1',
-                createdAt: new Date().toISOString(),
-            },
-            {
-                id: 2,
-                name: 'Owner2',
-                password: 'paralox',
-                isAdmin: true,
-                isAccountant: false,
-                isActive: true,
-                rvBefreit: false,
-                assignedTo: 'owner2',
                 createdAt: new Date().toISOString(),
             },
         ],
@@ -1439,7 +1455,20 @@ window.ParaloxConfig = {
         data.employees = Array.isArray(data.employees) ? data.employees : [];
         data.shifts    = Array.isArray(data.shifts) ? data.shifts : [];
         data.settings  = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
-        data.settings.rooms = Object.assign({}, DEFAULT_SETTINGS.rooms, data.settings.rooms || {});
+        // Räume NICHT mit Defaults mergen — sonst würden bei vorhandenen
+        // echten Räumen die generischen Platzhalter R1/R2 zusätzlich
+        // erscheinen. Defaults nur, wenn rooms ganz fehlt oder leer ist.
+        const existingRooms = data.settings.rooms || {};
+        data.settings.rooms = Object.keys(existingRooms).length > 0
+            ? existingRooms
+            : Object.assign({}, DEFAULT_SETTINGS.rooms);
+        // Labels (Anzeige-Namen für die Eigentümer in Listen/PDF) — Defaults
+        // füllen fehlende Felder, vorhandene Werte bleiben.
+        data.settings.labels = Object.assign(
+            {}, DEFAULT_SETTINGS.labels, data.settings.labels || {});
+        if (typeof data.settings.dataController !== 'string') {
+            data.settings.dataController = '';
+        }
         if (typeof data.settings.rvAnteilProzent !== 'number' || isNaN(data.settings.rvAnteilProzent)) {
             data.settings.rvAnteilProzent = DEFAULT_SETTINGS.rvAnteilProzent;
         }
@@ -2177,20 +2206,26 @@ window.ParaloxConfig = {
     }
 
     /* Befüllt #dsgvoNotice (im Consent-Modal) mit dem auf die aktuellen
-     * Sicherungs-Einstellungen abgestimmten Text. */
-    const VERANTWORTLICH = 'Beispiel GbR, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen · Owner2 Schmid, Burkhardt+Weber-Straße 69/2, 72760 Reutlingen';
+     * Sicherungs-Einstellungen abgestimmten Text. Verantwortliche Stelle
+     * kommt aus settings.dataController — wird vom Admin in Settings
+     * gepflegt, damit der Quellcode keine Adressen leakt. Wenn leer:
+     * "Verantwortlich"-Zeile wird ausgelassen statt Müll anzuzeigen. */
     function renderDsgvoNotice() {
         const el = $('#dsgvoNotice');
         if (!el) return;
         const cfg = settings()?.dailyBackup || {};
         const mcfg = settings()?.monthlyArchive || {};
+        const dataController = (settings()?.dataController || '').trim();
+        const verantwortlichLine = dataController
+            ? `<p>Verantwortlich: ${escapeHtml(dataController)}</p>`
+            : '';
         const dailyOn = !!cfg.enabled;
         const monthlyOn = !!mcfg.enabled;
 
         if (!dailyOn && !monthlyOn) {
             el.innerHTML =
                 '<p>Die erfassten Arbeitszeiten werden ausschließlich lokal auf diesem Gerät gespeichert. Es findet keine Übertragung an externe Dienste statt. Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>' +
-                `<p>Verantwortlich: ${escapeHtml(VERANTWORTLICH)}</p>`;
+                verantwortlichLine;
             return;
         }
 
@@ -2210,8 +2245,8 @@ window.ParaloxConfig = {
                     `an <strong>${escapeHtml(mrecipient || '— nicht konfiguriert —')}</strong> versendet`) +
                 '. Diese Mail dient der Aufbewahrungspflicht für Lohnunterlagen (10 Jahre, § 147 AO).</p>';
         }
-        html += '<p>Auftragsverarbeiter ist 1&amp;1 Mail &amp; Media GmbH (GMX, Deutschland) sowie der Mail-Anbieter des Endgeräts. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an der Datensicherung gegen Geräteverlust und an der gesetzlichen Aufbewahrungspflicht). Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>';
-        html += `<p>Verantwortlich: ${escapeHtml(VERANTWORTLICH)}</p>`;
+        html += '<p>Die Backup-Anhänge werden vor dem Versand clientseitig mit AES-256 verschlüsselt — der Mail-Anbieter (1&amp;1 Mail &amp; Media GmbH / GMX, Deutschland) hat keinen Klartext-Zugriff. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an der Datensicherung gegen Geräteverlust und an der gesetzlichen Aufbewahrungspflicht). Die Daten werden ausschließlich zur internen Lohnabrechnung verwendet und nicht an Dritte weitergegeben.</p>';
+        html += verantwortlichLine;
         el.innerHTML = html;
     }
 
@@ -2851,6 +2886,16 @@ window.ParaloxConfig = {
         const e = employees().find(x => x.id === id);
         return e ? e.name : `#${id}`;
     }
+    /* Anzeige-Label für den Arbeitgeber/Eigentümer eines Mitarbeiters.
+     * Wird in der Mitarbeiter-Liste, im Minijob-PDF und in Toasts verwendet.
+     * Texte stehen in settings.labels und werden vom Admin in Settings
+     * gepflegt — der Code enthält nur generische Defaults. */
+    function ownerLabel(assignedTo) {
+        const labels = settings()?.labels || {};
+        return assignedTo === 'owner2'
+            ? (labels.owner2 || 'Eigentümer 2')
+            : (labels.owner1 || 'Eigentümer 1');
+    }
     function empAssignment(id) {
         const e = employees().find(x => x.id === id);
         return (e && e.assignedTo) || 'owner1';
@@ -3276,9 +3321,7 @@ window.ParaloxConfig = {
         targetEmps.forEach((entry, idx) => {
             if (idx > 0) doc.addPage();
             const { emp, list } = entry;
-            const arbeitgeber = emp.assignedTo === 'owner2'
-                ? 'Owner2 Schmid'
-                : 'Beispiel GbR';
+            const arbeitgeber = ownerLabel(emp.assignedTo);
 
             doc.setFontSize(16); doc.setTextColor(0);
             doc.text('Stundenliste Minijob', 40, 50);
@@ -3363,6 +3406,18 @@ window.ParaloxConfig = {
         const admin = isAdmin();
         $('#empForm').classList.toggle('hidden', !admin);
         $('#empCreateTitle').classList.toggle('hidden', !admin);
+        // Eigentümer-Auswahl mit den Labels aus Settings befüllen, damit
+        // im Form die echten Bezeichnungen aus dem Tablet erscheinen,
+        // nicht die generischen Defaults aus dem öffentlichen Code.
+        const labels = settings()?.labels || {};
+        const sel = $('#empAssigned');
+        if (sel) {
+            const prev = sel.value;
+            sel.innerHTML =
+                `<option value="owner1">${escapeHtml(labels.owner1 || 'Eigentümer 1')}</option>` +
+                `<option value="owner2">${escapeHtml(labels.owner2 || 'Eigentümer 2')}</option>`;
+            if (prev) sel.value = prev;
+        }
         tbody.innerHTML = '';
         [...employees()].sort((a,b)=>a.name.localeCompare(b.name,'de')).forEach(e => {
             const roleBadge = e.isAdmin
@@ -3370,9 +3425,7 @@ window.ParaloxConfig = {
                 : e.isAccountant
                     ? '<span class="badge">Buchhaltung</span>'
                     : '<span class="badge muted">Mitarbeiter</span>';
-            const arbeitgeberLabel = e.assignedTo === 'owner2'
-                ? 'Owner2 Schmid'
-                : 'Beispiel GbR';
+            const arbeitgeberLabel = ownerLabel(e.assignedTo);
             const rvBadge = e.rvBefreit
                 ? '<span class="badge muted" title="Befreit — kein RV-Anteil-Abzug">RV-befreit</span>'
                 : '<span class="badge" title="RV-pflichtig — AN-Anteil wird vom Lohn abgezogen">RV-pflichtig</span>';
@@ -3437,7 +3490,7 @@ window.ParaloxConfig = {
             const emp = employees().find(x => x.id === Number(b.dataset.empAssign));
             emp.assignedTo = emp.assignedTo === 'owner2' ? 'owner1' : 'owner2';
             saveData();
-            const label = emp.assignedTo === 'owner2' ? 'Owner2 Schmid' : 'Beispiel GbR';
+            const label = ownerLabel(emp.assignedTo);
             toast(`Arbeitgeber: ${label}`, 'success');
             renderEmployees();
         });
@@ -3554,6 +3607,10 @@ window.ParaloxConfig = {
         $('#setSingle').value = settings().wageSingle;
         $('#setDouble').value = settings().wageDouble;
         $('#setRvAnteil').value = settings().rvAnteilProzent;
+        const labels = settings().labels || {};
+        $('#setLabelOwner1').value = labels.owner1 || '';
+        $('#setLabelOwner2').value = labels.owner2 || '';
+        $('#setDataController').value = settings().dataController || '';
         const cfg = settings().dailyBackup || {};
         $('#setBackupEnabled').checked = !!cfg.enabled;
         $('#setBackupRecipient').value = cfg.recipient || '';
@@ -3868,6 +3925,13 @@ window.ParaloxConfig = {
         settings().wageDouble = Math.max(0, Number($('#setDouble').value) || 0);
         const rv = Number($('#setRvAnteil').value);
         settings().rvAnteilProzent = (isFinite(rv) && rv >= 0 && rv <= 20) ? rv : 3.6;
+        // Labels und Verantwortliche Stelle (für DSGVO + Listen / PDF) — werden
+        // in den öffentlichen Quellcode bewusst NICHT hartkodiert, sondern hier
+        // pro Gerät gepflegt.
+        if (!settings().labels) settings().labels = {};
+        settings().labels.owner1 = $('#setLabelOwner1').value.trim();
+        settings().labels.owner2 = $('#setLabelOwner2').value.trim();
+        settings().dataController = $('#setDataController').value.trim();
         saveData();
         renderPreview();
         toast('Einstellungen gespeichert', 'success');
