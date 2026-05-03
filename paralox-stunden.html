@@ -623,6 +623,60 @@ tr.editing td {
     font-style: italic;
 }
 
+/* Laufende Schicht — Banner über dem Schicht-Form, sobald der eingeloggte
+   User eine offene Schicht hat. Grüner Akzent, damit es sofort ins Auge fällt. */
+.running-banner {
+    background: rgba(34, 197, 94, .15);
+    border: 1px solid rgba(34, 197, 94, .4);
+    color: #bbf7d0;
+    border-radius: var(--radius);
+    padding: .9rem 1.1rem;
+    margin-bottom: 1.25rem;
+    font-size: .95rem;
+    line-height: 1.45;
+}
+.running-banner strong { color: #fff; }
+.running-banner .running-meta {
+    font-size: .8rem;
+    color: #86efac;
+    margin-top: .25rem;
+}
+
+/* Topbar-Indikator: kleiner grüner Pulse-Punkt + Text "Schicht läuft".
+   Klickbar, springt zum Schicht-Form. */
+.running-indicator {
+    appearance: none;
+    background: rgba(34, 197, 94, .18);
+    border: 1px solid rgba(34, 197, 94, .45);
+    color: #bbf7d0;
+    border-radius: 999px;
+    padding: .35rem .85rem;
+    font-size: .8rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    margin-right: .75rem;
+}
+.running-indicator::before {
+    content: '';
+    width: .5rem;
+    height: .5rem;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, .7);
+    animation: pulse 1.6s ease-out infinite;
+}
+@keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(34, 197, 94, .7); }
+    70%  { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+}
+.running-indicator:hover {
+    background: rgba(34, 197, 94, .25);
+}
+
 /* DSGVO-Consent-Modal: einmaliger Hinweis beim ersten Besuch.
    Etwas breiter als das Standard-Modal — der Text ist lang. */
 .modal-box.dsgvo-consent {
@@ -757,6 +811,9 @@ tr.editing td {
     <div class="brand">Paralox Stunden</div>
     <nav id="tabs" class="tabs"></nav>
     <div class="user">
+        <!-- Indikator für eine laufende Schicht des eingeloggten Users.
+             Klick führt zum Schicht-Form, damit das Ende eingetragen werden kann. -->
+        <button id="topRunningIndicator" class="running-indicator hidden" type="button"></button>
         <span id="userName"></span>
         <button class="btn ghost" id="btnLogout">Abmelden</button>
     </div>
@@ -790,9 +847,14 @@ tr.editing td {
     <section id="view-enter" class="view hidden">
         <div class="card">
             <h2>Neue Schicht erfassen</h2>
+            <!-- Banner: nur sichtbar wenn der eingeloggte User eine offene Schicht hat.
+                 Wird von app.js renderShiftForm() ein-/ausgeblendet und befüllt. -->
+            <div id="runningShiftBanner" class="running-banner hidden"></div>
             <form id="shiftForm" class="grid" autocomplete="off">
                 <!-- Mitarbeiter-Auswahl: nur für Admins sichtbar, damit sie
-                     vergessene/vergangene Schichten für andere nachtragen können. -->
+                     vergessene/vergangene Schichten für andere nachtragen können.
+                     Ist deaktiviert, solange der eingeloggte User selbst eine
+                     offene Schicht beendet (dann gilt automatisch state.user.id). -->
                 <label id="sfEmpWrap" class="hidden">Mitarbeiter
                     <select id="sfEmp" autocomplete="off"></select>
                     <small class="hint">Admin-Funktion: Schicht für einen anderen Mitarbeiter erfassen.</small>
@@ -804,7 +866,7 @@ tr.editing td {
                     <input type="time" id="sfStart" required>
                 </label>
                 <label>Ende
-                    <input type="time" id="sfEnd" required>
+                    <input type="time" id="sfEnd">
                 </label>
                 <label>Raum
                     <select id="sfRoom" required autocomplete="off"></select>
@@ -821,7 +883,9 @@ tr.editing td {
                 </label>
                 <div class="full actions">
                     <div class="muted" id="sfPreview"></div>
-                    <button class="btn primary" type="submit">Speichern</button>
+                    <button class="btn" type="button" id="sfStartBtn">Schicht starten</button>
+                    <button class="btn primary" type="submit" id="sfSaveBtn">Komplett speichern</button>
+                    <button class="btn primary hidden" type="button" id="sfEndBtn">Schicht beenden</button>
                 </div>
             </form>
         </div>
@@ -1275,6 +1339,12 @@ window.ParaloxConfig = {
     // gesetzt und gerätelokal gehalten — nicht im JSON-Backup, sonst hätte
     // jeder, der das Backup hat, automatisch das Passwort.
     const BACKUP_PASSWORD_KEY = 'paraloxStunden.backupPassword';
+    // Offene Schichten ("Schicht gestartet, Ende noch nicht eingetragen").
+    // Map { [employeeId]: { date, startTime, room, secondRoom, isDouble, note,
+    // startedAt } }. Gerätelokal — wenn ein Mitarbeiter auf einem anderen
+    // Tablet einloggt, sieht er die offene Schicht nicht. Eine Schicht pro
+    // Mitarbeiter zur Zeit; muss erst beendet werden, bevor eine neue startet.
+    const RUNNING_SHIFTS_KEY = 'paraloxStunden.runningShifts';
 
     const DEFAULT_SETTINGS = {
         wageSingle: 14,
@@ -1461,6 +1531,23 @@ window.ParaloxConfig = {
         if (pw) localStorage.setItem(BACKUP_PASSWORD_KEY, pw);
         else localStorage.removeItem(BACKUP_PASSWORD_KEY);
     }
+    function getRunningShifts() {
+        try { return JSON.parse(localStorage.getItem(RUNNING_SHIFTS_KEY) || '{}'); }
+        catch { return {}; }
+    }
+    function getRunningShift(employeeId) {
+        const map = getRunningShifts();
+        return map[String(employeeId)] || null;
+    }
+    function setRunningShift(employeeId, data) {
+        const map = getRunningShifts();
+        if (!data) delete map[String(employeeId)];
+        else map[String(employeeId)] = data;
+        localStorage.setItem(RUNNING_SHIFTS_KEY, JSON.stringify(map));
+    }
+    function clearRunningShift(employeeId) {
+        setRunningShift(employeeId, null);
+    }
 
     function nextId(items) {
         let max = 0;
@@ -1477,6 +1564,7 @@ window.ParaloxConfig = {
         getLastMonthlyArchive, setLastMonthlyArchive,
         getDsgvoAccepted, setDsgvoAccepted,
         getBackupPassword, setBackupPassword,
+        getRunningShift, setRunningShift, clearRunningShift,
         nextId,
     };
 })();
@@ -1923,7 +2011,7 @@ window.ParaloxConfig = {
         ['enter','mine','shifts','employees','settings','pinboard'].forEach(v => {
             $(`#view-${v}`).classList.toggle('hidden', v !== name);
         });
-        if (name === 'enter')     refreshShiftEmpSelect();
+        if (name === 'enter')     { refreshShiftEmpSelect(); renderShiftFormMode(); }
         if (name === 'mine')      renderMine();
         if (name === 'shifts')    renderAdminShifts();
         if (name === 'employees') renderEmployees();
@@ -2203,10 +2291,90 @@ window.ParaloxConfig = {
         $('#sfRoom2').value = '';
 
         refreshShiftEmpSelect();
+        renderShiftFormMode();
 
         renderPreview();
         buildTabs();
         startIdleTimer();
+    }
+
+    /* Stellt das "Neue Schicht"-Formular auf "Beenden"-Modus um, falls der
+     * eingeloggte User eine offene Schicht hat — sonst zurück auf den
+     * normalen "Starten / Komplett speichern"-Modus. Aktualisiert auch den
+     * pulsierenden Indikator in der Topbar. Aufgerufen aus enterApp(), beim
+     * Tab-Wechsel auf 'enter' und nach Start/Beenden einer Schicht. */
+    function renderShiftFormMode() {
+        const open = state.user
+            ? window.ParaloxStorage.getRunningShift(state.user.id)
+            : null;
+        const banner = $('#runningShiftBanner');
+        const indicator = $('#topRunningIndicator');
+        const startBtn = $('#sfStartBtn');
+        const saveBtn = $('#sfSaveBtn');
+        const endBtn = $('#sfEndBtn');
+        const empWrap = $('#sfEmpWrap');
+        const dateIn = $('#sfDate');
+        const startIn = $('#sfStart');
+        const endIn = $('#sfEnd');
+        const roomIn = $('#sfRoom');
+        const room2In = $('#sfRoom2');
+        const doubleIn = $('#sfDouble');
+        const noteIn = $('#sfNote');
+
+        if (open) {
+            // Beenden-Modus: vorhandene Felder aus der laufenden Schicht setzen,
+            // Beginn/Datum/Raum read-only. Doppelüberwachung darf der Mitarbeiter
+            // beim Beenden noch ändern (zweiter Raum kann später dazugekommen sein).
+            const roomLabel = (settings().rooms?.[open.room]?.name) || open.room;
+            banner.innerHTML =
+                '<strong>🟢 Deine Schicht läuft</strong> seit ' +
+                `${escapeHtml(fmtDateDE(open.date))} um ${escapeHtml(open.startTime)} ` +
+                `in Raum <strong>${escapeHtml(roomLabel)}</strong>.` +
+                `<div class="running-meta">Gestartet ${fmtDateTimeDE(open.startedAt)}. ` +
+                'Trage unten die Endezeit ein und tippe „Schicht beenden".</div>';
+            banner.classList.remove('hidden');
+            dateIn.value = open.date;
+            startIn.value = open.startTime;
+            roomIn.value = open.room;
+            doubleIn.checked = !!open.isDouble;
+            refreshShiftRoomSelects();
+            if (open.isDouble && open.secondRoom) room2In.value = open.secondRoom;
+            noteIn.value = open.note || '';
+            // Einsperren der Start-Felder, Ende soll der einzige aktiv editierbare
+            // Pflicht-Eintrag sein.
+            dateIn.disabled = true;
+            startIn.disabled = true;
+            roomIn.disabled = true;
+            endIn.required = true;
+            // Mitarbeiter-Dropdown ausblenden — Beenden gilt immer für sich selbst
+            empWrap.classList.add('hidden');
+            startBtn.classList.add('hidden');
+            saveBtn.classList.add('hidden');
+            endBtn.classList.remove('hidden');
+
+            indicator.textContent = `Schicht läuft seit ${open.startTime}`;
+            indicator.title = `Seit ${fmtDateDE(open.date)} ${open.startTime} in ${roomLabel} — klicken um zu beenden`;
+            indicator.classList.remove('hidden');
+        } else {
+            // Normalmodus: zwei Buttons, Start- und Komplett-Speichern.
+            banner.classList.add('hidden');
+            banner.innerHTML = '';
+            dateIn.disabled = false;
+            startIn.disabled = false;
+            roomIn.disabled = false;
+            endIn.required = false;
+            // Datum nur für Admin frei wählbar (heutige Mitarbeiter dürfen
+            // nur den heutigen Tag erfassen — wird in enterApp() gesetzt).
+            startBtn.classList.remove('hidden');
+            saveBtn.classList.remove('hidden');
+            endBtn.classList.add('hidden');
+            // Admin-Mitarbeiter-Dropdown im Normalmodus wieder anzeigen
+            refreshShiftEmpSelect();
+
+            indicator.classList.add('hidden');
+            indicator.textContent = '';
+        }
+        renderPreview();
     }
 
     /* Befüllt das Mitarbeiter-Dropdown im "Neue Schicht"-Formular für Admins.
@@ -2260,6 +2428,13 @@ window.ParaloxConfig = {
 
     $('#shiftForm').addEventListener('submit', (ev) => {
         ev.preventDefault();
+        // Wenn der eingeloggte User eine offene Schicht hat, ist das Form
+        // im Beenden-Modus — der Submit darf NICHT als Komplett-Speichern
+        // durchgehen. Submit-Verhalten wird vom "Schicht beenden"-Button
+        // gehandhabt (eigener Click-Listener weiter unten).
+        if (state.user && window.ParaloxStorage.getRunningShift(state.user.id)) {
+            return;
+        }
         const btn = ev.submitter || $('#shiftForm button[type="submit"]');
         if (btn && btn.disabled) return;
         const isD = $('#sfDouble').checked;
@@ -2278,6 +2453,10 @@ window.ParaloxConfig = {
             secondRoom: isD ? $('#sfRoom2').value : null,
             note: $('#sfNote').value,
         };
+        if (!payload.endTime) {
+            toast('Bitte ein Ende eintragen — oder „Schicht starten" für eine offene Schicht.', 'error');
+            return;
+        }
         const err = validateShiftPayload(payload);
         if (err) { toast(err, 'error'); return; }
         if (!isAdmin()) {
@@ -2324,6 +2503,119 @@ window.ParaloxConfig = {
         $('#sfRoom2').value = '';
         renderPreview();
         if (state.activeTab === 'mine') renderMine();
+    });
+
+    /* "Schicht starten" — speichert Datum + Beginn + Raum als laufende
+     * Schicht im localStorage. Funktioniert nur für den eingeloggten User
+     * (kein Starten für andere via Mitarbeiter-Dropdown). Voraussetzung:
+     * für diesen User darf noch keine andere offene Schicht existieren.
+     * Heute, Beginn und Raum sind Pflicht; Doppelüberwachung optional. */
+    $('#sfStartBtn').addEventListener('click', () => {
+        if (!state.user) return;
+        if (window.ParaloxStorage.getRunningShift(state.user.id)) {
+            toast('Du hast bereits eine offene Schicht — bitte erst beenden.', 'error');
+            renderShiftFormMode();
+            return;
+        }
+        const isD = $('#sfDouble').checked;
+        const data = {
+            date: $('#sfDate').value,
+            startTime: $('#sfStart').value,
+            room: $('#sfRoom').value,
+            isDouble: isD,
+            secondRoom: isD ? $('#sfRoom2').value : null,
+            note: $('#sfNote').value,
+            startedAt: new Date().toISOString(),
+        };
+        if (!validDate(data.date)) { toast('Ungültiges Datum.', 'error'); return; }
+        if (!validTime(data.startTime)) { toast('Bitte einen gültigen Beginn eintragen.', 'error'); return; }
+        const rooms = settings().rooms || {};
+        if (!rooms[data.room]) { toast('Bitte einen Raum wählen.', 'error'); return; }
+        if (isD && (!rooms[data.secondRoom] || data.secondRoom === data.room)) {
+            toast('Zweiter Raum ungültig.', 'error');
+            return;
+        }
+        if (!isAdmin()) {
+            const today = todayISO();
+            if (data.date !== today) {
+                toast('Schicht darf nur am heutigen Tag gestartet werden.', 'error');
+                return;
+            }
+        }
+        window.ParaloxStorage.setRunningShift(state.user.id, data);
+        toast('Schicht gestartet — viel Erfolg!', 'success');
+        renderShiftFormMode();
+    });
+
+    /* "Schicht beenden" — übernimmt Beginn/Datum/Raum aus der laufenden
+     * Schicht, ergänzt um die jetzt eingegebene End-Zeit (und ggf. später
+     * gewählte Doppelüberwachung), schreibt eine fertige Schicht in die
+     * Datenbank und löscht den Running-Marker. */
+    $('#sfEndBtn').addEventListener('click', () => {
+        if (!state.user) return;
+        const open = window.ParaloxStorage.getRunningShift(state.user.id);
+        if (!open) { renderShiftFormMode(); return; }
+        const isD = $('#sfDouble').checked;
+        const payload = {
+            employeeId: state.user.id,
+            date: open.date,
+            startTime: open.startTime,
+            endTime: $('#sfEnd').value,
+            room: open.room,
+            isDouble: isD,
+            // Beim Beenden darf der zweite Raum noch nachgetragen werden
+            secondRoom: isD ? $('#sfRoom2').value : null,
+            note: $('#sfNote').value,
+        };
+        if (!payload.endTime) { toast('Bitte ein Ende eintragen.', 'error'); return; }
+        const err = validateShiftPayload(payload);
+        if (err) { toast(err, 'error'); return; }
+        if (!isAdmin()) {
+            const ne = validateNonAdminConstraints(payload);
+            if (ne) { toast(ne, 'error'); return; }
+        }
+        const overlap = findOverlap(shifts(), payload);
+        if (overlap) {
+            toast(`Zeit überschneidet sich mit bestehender Schicht (${overlap.startTime}–${overlap.endTime}, ${overlap.room}).`, 'error');
+            return;
+        }
+        if (isDuplicate(shifts(), payload)) {
+            toast('Diese Schicht existiert bereits.', 'error');
+            return;
+        }
+        state.data.shifts.push({
+            id: window.ParaloxStorage.nextId(shifts()),
+            employeeId: payload.employeeId,
+            date: payload.date,
+            startTime: payload.startTime,
+            endTime: payload.endTime,
+            room: payload.room,
+            secondRoom: payload.secondRoom,
+            isDouble: payload.isDouble,
+            note: (payload.note || '').trim(),
+            createdAt: new Date().toISOString(),
+        });
+        saveData();
+        window.ParaloxStorage.clearRunningShift(state.user.id);
+        toast('Schicht beendet und gespeichert', 'success');
+        // Form leeren + zurück in den Normal-Modus
+        $('#sfDate').value = todayISO();
+        $('#sfStart').value = '';
+        $('#sfEnd').value = '';
+        $('#sfNote').value = '';
+        $('#sfDouble').checked = false;
+        $('#sfRoom').value  = '';
+        $('#sfRoom2').value = '';
+        refreshShiftRoomSelects();
+        renderShiftFormMode();
+        if (state.activeTab === 'mine') renderMine();
+    });
+
+    /* Klick auf den pulsierenden "Schicht läuft"-Indikator in der Topbar
+     * → wechselt zum Schicht-Tab, damit der Mitarbeiter direkt das Ende
+     * eintragen kann. */
+    $('#topRunningIndicator').addEventListener('click', () => {
+        switchTab('enter');
     });
 
     // ---------- Meine Stunden ----------

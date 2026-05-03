@@ -39,6 +39,9 @@
     <div class="brand">Paralox Stunden</div>
     <nav id="tabs" class="tabs"></nav>
     <div class="user">
+        <!-- Indikator für eine laufende Schicht des eingeloggten Users.
+             Klick führt zum Schicht-Form, damit das Ende eingetragen werden kann. -->
+        <button id="topRunningIndicator" class="running-indicator hidden" type="button"></button>
         <span id="userName"></span>
         <button class="btn ghost" id="btnLogout">Abmelden</button>
     </div>
@@ -72,9 +75,14 @@
     <section id="view-enter" class="view hidden">
         <div class="card">
             <h2>Neue Schicht erfassen</h2>
+            <!-- Banner: nur sichtbar wenn der eingeloggte User eine offene Schicht hat.
+                 Wird von app.js renderShiftForm() ein-/ausgeblendet und befüllt. -->
+            <div id="runningShiftBanner" class="running-banner hidden"></div>
             <form id="shiftForm" class="grid" autocomplete="off">
                 <!-- Mitarbeiter-Auswahl: nur für Admins sichtbar, damit sie
-                     vergessene/vergangene Schichten für andere nachtragen können. -->
+                     vergessene/vergangene Schichten für andere nachtragen können.
+                     Ist deaktiviert, solange der eingeloggte User selbst eine
+                     offene Schicht beendet (dann gilt automatisch state.user.id). -->
                 <label id="sfEmpWrap" class="hidden">Mitarbeiter
                     <select id="sfEmp" autocomplete="off"></select>
                     <small class="hint">Admin-Funktion: Schicht für einen anderen Mitarbeiter erfassen.</small>
@@ -86,7 +94,7 @@
                     <input type="time" id="sfStart" required>
                 </label>
                 <label>Ende
-                    <input type="time" id="sfEnd" required>
+                    <input type="time" id="sfEnd">
                 </label>
                 <label>Raum
                     <select id="sfRoom" required autocomplete="off"></select>
@@ -103,7 +111,9 @@
                 </label>
                 <div class="full actions">
                     <div class="muted" id="sfPreview"></div>
-                    <button class="btn primary" type="submit">Speichern</button>
+                    <button class="btn" type="button" id="sfStartBtn">Schicht starten</button>
+                    <button class="btn primary" type="submit" id="sfSaveBtn">Komplett speichern</button>
+                    <button class="btn primary hidden" type="button" id="sfEndBtn">Schicht beenden</button>
                 </div>
             </form>
         </div>

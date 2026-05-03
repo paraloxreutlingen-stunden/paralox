@@ -20,6 +20,12 @@
     // gesetzt und gerätelokal gehalten — nicht im JSON-Backup, sonst hätte
     // jeder, der das Backup hat, automatisch das Passwort.
     const BACKUP_PASSWORD_KEY = 'paraloxStunden.backupPassword';
+    // Offene Schichten ("Schicht gestartet, Ende noch nicht eingetragen").
+    // Map { [employeeId]: { date, startTime, room, secondRoom, isDouble, note,
+    // startedAt } }. Gerätelokal — wenn ein Mitarbeiter auf einem anderen
+    // Tablet einloggt, sieht er die offene Schicht nicht. Eine Schicht pro
+    // Mitarbeiter zur Zeit; muss erst beendet werden, bevor eine neue startet.
+    const RUNNING_SHIFTS_KEY = 'paraloxStunden.runningShifts';
 
     const DEFAULT_SETTINGS = {
         wageSingle: 14,
@@ -206,6 +212,23 @@
         if (pw) localStorage.setItem(BACKUP_PASSWORD_KEY, pw);
         else localStorage.removeItem(BACKUP_PASSWORD_KEY);
     }
+    function getRunningShifts() {
+        try { return JSON.parse(localStorage.getItem(RUNNING_SHIFTS_KEY) || '{}'); }
+        catch { return {}; }
+    }
+    function getRunningShift(employeeId) {
+        const map = getRunningShifts();
+        return map[String(employeeId)] || null;
+    }
+    function setRunningShift(employeeId, data) {
+        const map = getRunningShifts();
+        if (!data) delete map[String(employeeId)];
+        else map[String(employeeId)] = data;
+        localStorage.setItem(RUNNING_SHIFTS_KEY, JSON.stringify(map));
+    }
+    function clearRunningShift(employeeId) {
+        setRunningShift(employeeId, null);
+    }
 
     function nextId(items) {
         let max = 0;
@@ -222,6 +245,7 @@
         getLastMonthlyArchive, setLastMonthlyArchive,
         getDsgvoAccepted, setDsgvoAccepted,
         getBackupPassword, setBackupPassword,
+        getRunningShift, setRunningShift, clearRunningShift,
         nextId,
     };
 })();
