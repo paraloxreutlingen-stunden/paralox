@@ -168,6 +168,15 @@
                     <button class="btn ghost" id="adminReset">Zurücksetzen</button>
                 </div>
             </div>
+            <div class="row-between">
+                <h3>Export</h3>
+                <div class="filters">
+                    <button class="btn" data-export="csv">CSV</button>
+                    <button class="btn" data-export="ods">ODS</button>
+                    <button class="btn" data-export="pdf">PDF</button>
+                    <button class="btn primary" data-export="minijob" title="Öffnet Monats-Auswahl. 1 PDF, 1 Seite pro Mitarbeiter.">Minijob-PDF…</button>
+                </div>
+            </div>
             <div class="summary" id="adminSummary"></div>
             <div class="table-wrap">
                 <table class="data" id="adminTable">
@@ -181,15 +190,6 @@
                     </thead>
                     <tbody></tbody>
                 </table>
-            </div>
-            <div class="row-between">
-                <h3>Export</h3>
-                <div class="filters">
-                    <button class="btn" data-export="csv">CSV</button>
-                    <button class="btn" data-export="ods">ODS</button>
-                    <button class="btn" data-export="pdf">PDF</button>
-                    <button class="btn primary" data-export="minijob" title="Öffnet Monats-Auswahl. 1 PDF, 1 Seite pro Mitarbeiter.">Minijob-PDF…</button>
-                </div>
             </div>
         </div>
     </section>

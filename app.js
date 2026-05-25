@@ -1519,6 +1519,21 @@
      * Tagessicherung / Monatsabschluss-Mail (mit eigener Filter-Liste)
      * benutzt. */
     function exportRowsFromList(list) {
+        /* Export-Sortierung: pro Monat (absteigend, neueste zuerst) alle
+         * Schichten eines Mitarbeiters zusammen — alphabetisch nach Name,
+         * innerhalb chronologisch aufsteigend. So liest man im Export einen
+         * Monat als Block durch und kann Lohn-Auszahlungen pro Person prüfen.
+         * Die Tabellen-Ansicht in "Alle Schichten" bleibt unverändert nach
+         * Datum absteigend sortiert (siehe adminSortedShifts). */
+        list = [...list].sort((a, b) => {
+            const aMonth = (a.date || '').slice(0, 7);
+            const bMonth = (b.date || '').slice(0, 7);
+            if (aMonth !== bMonth) return bMonth.localeCompare(aMonth);
+            const cmp = empName(a.employeeId).localeCompare(empName(b.employeeId), 'de');
+            if (cmp !== 0) return cmp;
+            if (a.date !== b.date) return a.date.localeCompare(b.date);
+            return (a.startTime || '').localeCompare(b.startTime || '');
+        });
         const pctStr = String(ABGABEN_PCT).replace('.', ',');
         const rvPctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
         const rows = [[
