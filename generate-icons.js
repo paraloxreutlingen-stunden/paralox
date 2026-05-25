@@ -1,8 +1,9 @@
 /* Generiert die PWA-Icons (icons/icon-192.png + icons/icon-512.png).
  * Kommt ohne externe Lib aus — nur Node-built-in zlib + Buffer-Operationen.
  *
- * Aktuell: lila Quadrat mit weißem stilisierten "P". Later jederzeit
- * ersetzbar durch ein echtes Logo (gleiche Maße, gleiche Dateinamen).
+ * Aktuell: hellgrünes Quadrat (Paralox-Logo-Farbe #bbce00) mit schwarzem
+ * stilisierten "P". Later jederzeit ersetzbar durch ein echtes Logo
+ * (gleiche Maße, gleiche Dateinamen).
  *
  * Nutzung: node generate-icons.js
  */
@@ -35,8 +36,8 @@ function chunk(type, data) {
     return Buffer.concat([len, typeBuf, data, crcBuf]);
 }
 
-/* Stilisiertes "P" als 16x16-Bitmask. 1 = Vordergrund (weiß),
- * 0 = Hintergrund (durchscheinend → lila). */
+/* Stilisiertes "P" als 16x16-Bitmask. 1 = Vordergrund (schwarz),
+ * 0 = Hintergrund (durchscheinend → hellgrün). */
 const P_MASK = [
     '0000000000000000',
     '0011111111110000',
@@ -57,9 +58,9 @@ const P_MASK = [
 ];
 
 function writePng(filePath, size) {
-    // Hintergrund: lila (#6d28d9), Vordergrund: weiß
-    const BG = [0x6d, 0x28, 0xd9, 0xff];
-    const FG = [0xff, 0xff, 0xff, 0xff];
+    // Hintergrund: hellgrün (#bbce00, Paralox-Logo-Farbe), Vordergrund: schwarz
+    const BG = [0xbb, 0xce, 0x00, 0xff];
+    const FG = [0x00, 0x00, 0x00, 0xff];
     const MASK_SIZE = 16;
     const scale = size / MASK_SIZE;
 

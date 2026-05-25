@@ -1704,8 +1704,8 @@
             body: rows.slice(1),
             startY: 74,
             styles: { fontSize: 8, cellPadding: 3 },
-            headStyles: { fillColor: [124, 92, 255] },
-            alternateRowStyles: { fillColor: [245, 243, 255] },
+            headStyles: { fillColor: [187, 206, 0], textColor: 0 },
+            alternateRowStyles: { fillColor: [240, 248, 200] },
         });
         const yPos = doc.lastAutoTable.finalY + 20;
         const pctStr = String(ABGABEN_PCT).replace('.', ',');
@@ -1799,8 +1799,8 @@
                 body,
                 startY: 130,
                 styles: { fontSize: 10, cellPadding: 5 },
-                headStyles: { fillColor: [124, 92, 255], textColor: 255 },
-                alternateRowStyles: { fillColor: [245, 243, 255] },
+                headStyles: { fillColor: [187, 206, 0], textColor: 0 },
+                alternateRowStyles: { fillColor: [240, 248, 200] },
                 columnStyles: {
                     3: { halign: 'right' },
                     4: { halign: 'right' },
