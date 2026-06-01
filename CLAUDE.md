@@ -30,6 +30,7 @@ Rollen: **Admin** (alles), **Buchhaltung** (nur Lesen, max. 90 Tage zurück), no
 | `style.css` | Styles |
 | `build-bundle.js` | Baut `paralox-stunden.html` aus den obigen Quellen, validiert Inline-JS via `node --check` |
 | `paralox-stunden.html` | **Generiertes Bundle**, nicht direkt editieren |
+| `decrypt.html` | Standalone-Tool zum Entschlüsseln der `.enc`-Backups außerhalb der App (offline-fähig, kein Login) — Crypto-Format gespiegelt aus `crypto.js`, muss bei Format-Änderungen mitgepflegt werden |
 | `service-worker.js`, `manifest.json`, `icons/` | PWA |
 | `generate-icons.js` | Icon-Generator |
 | `test-*.js` | Playwright-Tests (siehe unten) |

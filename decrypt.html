@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paralox Sicherung entschlüsseln</title>
+<style>
+:root {
+    --bg:      #363a48;
+    --card:    #454959;
+    --border:  #5a5f74;
+    --text:    #edeff5;
+    --muted:   #9da2bb;
+    --accent:  #bbce00;
+    --accent-dark: #7d8a00;
+    --ok:      #4ade80;
+    --err:     #fb7185;
+    --radius:  16px;
+}
+* { box-sizing: border-box; }
+html, body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: linear-gradient(180deg, #3a3e4d 0%, #303442 100%);
+    color: var(--text);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+}
+main {
+    max-width: 540px;
+    margin: 0 auto;
+    padding: 2rem 1.25rem;
+}
+.card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,.25);
+}
+h1 { margin: 0 0 .25rem; font-size: 1.4rem; }
+.subtitle { color: var(--muted); margin: 0 0 1.5rem; font-size: .95rem; }
+label {
+    display: block;
+    margin: 1rem 0;
+    font-size: .95rem;
+}
+label > span { display: block; margin-bottom: .35rem; color: var(--muted); font-size: .85rem; }
+input[type="file"], input[type="password"] {
+    width: 100%;
+    padding: .65rem .75rem;
+    font-size: 1rem;
+    background: #3d4150;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-family: inherit;
+}
+input[type="password"]:focus, input[type="file"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(187, 206, 0, .2);
+}
+.checkbox {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    color: var(--muted);
+    font-size: .9rem;
+    margin: .5rem 0 1rem;
+}
+.checkbox input { margin: 0; }
+button {
+    width: 100%;
+    padding: .85rem 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    margin-top: .5rem;
+    font-family: inherit;
+}
+button:hover { background: #ccd911; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+.status {
+    margin-top: 1rem;
+    padding: .85rem 1rem;
+    border-radius: 10px;
+    font-size: .95rem;
+    display: none;
+}
+.status.ok  { background: rgba(74, 222, 128, .15); border: 1px solid rgba(74, 222, 128, .35); color: #b6f0c8; display: block; }
+.status.err { background: rgba(251, 113, 133, .18); border: 1px solid rgba(251, 113, 133, .35); color: #ffc4cc; display: block; }
+.hint {
+    margin-top: 1.5rem;
+    font-size: .85rem;
+    color: var(--muted);
+    line-height: 1.5;
+}
+.hint code {
+    background: #3d4150;
+    padding: .1rem .4rem;
+    border-radius: 4px;
+    font-size: .85em;
+}
+</style>
+</head>
+<body>
+<main>
+    <div class="card">
+        <h1>Paralox Sicherung entschlüsseln</h1>
+        <p class="subtitle">Lokal in deinem Browser. Datei und Passwort verlassen dieses Gerät nicht.</p>
+
+        <label>
+            <span>Verschlüsselte Datei (<code>.enc</code>)</span>
+            <input type="file" id="file" accept=".enc">
+        </label>
+
+        <label>
+            <span>Backup-Passwort</span>
+            <input type="password" id="pw" autocomplete="off" placeholder="Passwort, das du in den App-Einstellungen gesetzt hast">
+        </label>
+
+        <label class="checkbox">
+            <input type="checkbox" id="show">
+            <span>Passwort anzeigen</span>
+        </label>
+
+        <button id="go" type="button">Entschlüsseln &amp; herunterladen</button>
+
+        <div class="status" id="status"></div>
+
+        <p class="hint">
+            <strong>Was passiert hier?</strong> Die Datei wird mit dem von dir eingegebenen Passwort
+            entschlüsselt und das Original (z.B. <code>.json</code>, <code>.csv</code>, <code>.pdf</code>)
+            heruntergeladen — du kannst es danach mit den passenden Programmen öffnen.
+            <br><br>
+            Die Seite kommt ohne Server aus: nichts wird hochgeladen, nichts gespeichert. Du kannst
+            diese Datei <code>decrypt.html</code> auch auf den Desktop legen und per Doppelklick offline
+            verwenden.
+        </p>
+    </div>
+</main>
+
+<script>
+'use strict';
+
+// Spiegelt das Format aus crypto.js wider:
+// "PXEN" + Version + 16 Byte Salt + 12 Byte IV + Ciphertext (AES-GCM)
+const MAGIC = new Uint8Array([0x50, 0x58, 0x45, 0x4E]);
+const VERSION = 0x01;
+const SALT_LEN = 16;
+const IV_LEN = 12;
+const PBKDF2_ITER = 100000;
+const KEY_BITS = 256;
+const HEADER_LEN = MAGIC.length + 1 + SALT_LEN + IV_LEN;
+
+async function deriveKey(password, salt) {
+    const baseKey = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(password),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt, iterations: PBKDF2_ITER, hash: 'SHA-256' },
+        baseKey,
+        { name: 'AES-GCM', length: KEY_BITS },
+        false,
+        ['encrypt', 'decrypt']
+    );
+}
+
+async function decryptBlob(blob, password) {
+    if (!password) throw new Error('Bitte das Backup-Passwort eingeben.');
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    if (buf.length < HEADER_LEN + 16) {
+        throw new Error('Datei ist zu klein, um eine verschlüsselte Sicherung zu sein.');
+    }
+    for (let i = 0; i < MAGIC.length; i++) {
+        if (buf[i] !== MAGIC[i]) {
+            throw new Error('Datei ist keine Paralox-Sicherung (PXEN-Header fehlt).');
+        }
+    }
+    const version = buf[MAGIC.length];
+    if (version !== VERSION) {
+        throw new Error('Unbekannte Sicherungs-Version: ' + version);
+    }
+    let pos = MAGIC.length + 1;
+    const salt = buf.slice(pos, pos + SALT_LEN); pos += SALT_LEN;
+    const iv = buf.slice(pos, pos + IV_LEN); pos += IV_LEN;
+    const ct = buf.slice(pos);
+    const key = await deriveKey(password, salt);
+    let plain;
+    try {
+        plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    } catch {
+        throw new Error('Falsches Passwort oder beschädigte Datei.');
+    }
+    return new Uint8Array(plain);
+}
+
+function originalName(encryptedName) {
+    return encryptedName.replace(/\.enc$/i, '');
+}
+
+function setStatus(msg, kind) {
+    const el = document.getElementById('status');
+    el.className = 'status ' + (kind || '');
+    el.textContent = msg;
+}
+
+document.getElementById('show').addEventListener('change', (e) => {
+    document.getElementById('pw').type = e.target.checked ? 'text' : 'password';
+});
+
+document.getElementById('go').addEventListener('click', async () => {
+    const fileInput = document.getElementById('file');
+    const pwInput = document.getElementById('pw');
+    const btn = document.getElementById('go');
+
+    if (!fileInput.files || !fileInput.files[0]) {
+        setStatus('Bitte zuerst eine .enc-Datei auswählen.', 'err');
+        return;
+    }
+    const file = fileInput.files[0];
+    const password = pwInput.value;
+    if (!password) {
+        setStatus('Bitte das Backup-Passwort eingeben.', 'err');
+        return;
+    }
+
+    btn.disabled = true;
+    setStatus('Entschlüssele …', '');
+    try {
+        const plain = await decryptBlob(file, password);
+        const outName = originalName(file.name) || 'paralox-backup';
+        const blob = new Blob([plain], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = outName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+        setStatus('Fertig — "' + outName + '" wurde heruntergeladen.', 'ok');
+    } catch (e) {
+        setStatus(e.message || 'Entschlüsselung fehlgeschlagen.', 'err');
+    } finally {
+        btn.disabled = false;
+    }
+});
+</script>
+</body>
+</html>
