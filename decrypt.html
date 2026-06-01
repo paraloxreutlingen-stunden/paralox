@@ -239,8 +239,17 @@ document.getElementById('go').addEventListener('click', async () => {
     setStatus('Entschlüssele …', '');
     try {
         const plain = await decryptBlob(file, password);
-        const outName = originalName(file.name) || 'paralox-backup';
-        const blob = new Blob([plain], { type: 'application/octet-stream' });
+        let outName = originalName(file.name) || 'paralox-backup';
+        // Manche Mail-Programme hängen die Original-Endung doppelt an
+        // (z.B. xxx.json.json) — hier zu einer Endung normalisieren.
+        outName = outName.replace(/(\.\w{2,5})\1+$/i, '$1');
+        // Passenden MIME-Type setzen, damit der Browser keinen
+        // Default-Suffix anhängt (sonst landet z.B. xxx.json als xxx.json.json).
+        const mime = /\.json$/i.test(outName) ? 'application/json'
+                   : /\.csv$/i.test(outName)  ? 'text/csv'
+                   : /\.pdf$/i.test(outName)  ? 'application/pdf'
+                   : 'application/octet-stream';
+        const blob = new Blob([plain], { type: mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
