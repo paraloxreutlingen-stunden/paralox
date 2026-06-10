@@ -2,7 +2,22 @@
 (() => {
     'use strict';
 
-    const ABGABEN_PCT = 31.17; // fester Satz, nicht änderbar
+    /* Pauschalabgaben für gewerbliche Minijobs an die Minijob-Zentrale,
+     * Stand 2026 (Quelle: minijob-zentrale.de). Wenn sich ein Einzelposten
+     * gesetzlich ändert, hier den Wert anpassen — ABGABEN_PCT addiert sich
+     * automatisch neu auf. */
+    const ABGABEN_PARTS = {
+        kv:        13.00,  // Pauschalbeitrag Krankenversicherung
+        rv:        15.00,  // Pauschalbeitrag Rentenversicherung (AG-Anteil)
+        u1:         0.80,  // Umlage U1 Krankheit  (zum 01.01.2026 von 1,10 auf 0,80 gesenkt)
+        u2:         0.22,  // Umlage U2 Mutterschaft  (zum 01.01.2026 von 0,24 auf 0,22 gesenkt)
+        insolvenz:  0.15,  // Insolvenzgeldumlage
+        steuer:     2.00,  // Pauschsteuer
+    };
+    // Math.round verhindert Floating-Point-Drift bei der Summe (sonst 31.169999…).
+    const ABGABEN_PCT = Math.round(
+        Object.values(ABGABEN_PARTS).reduce((sum, x) => sum + x, 0) * 100
+    ) / 100;  // = 31,17
     const LIMIT_YEAR       = 7236;
     const LIMIT_YEAR_WARN  = 5736;
     const LIMIT_MONTH      = 603;
