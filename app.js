@@ -1338,17 +1338,118 @@
         return !!(e && e.rvBefreit);
     }
 
-    /* Berechnet Brutto, RV-Anteil und Auszahlung für einen gegebenen Bruttolohn.
-     * Wenn der Mitarbeiter von der RV-Pflicht befreit ist, ist rvAnteil = 0 und
-     * auszahlung = brutto. Sonst werden settings.rvAnteilProzent vom Brutto
-     * abgezogen (Stand 2026: 3,6 %). Centgenau gerundet. */
-    function payoutInfo(brutto, rvBefreit) {
-        const round = n => Math.round(n * 100) / 100;
-        const b = round(brutto);
-        if (rvBefreit) return { brutto: b, rvAnteil: 0, auszahlung: b };
+    /* Minijob-RV-Konstanten (Stand Minijob-Zentrale 2026, gewerbliche Anstellung).
+     * Mindestbeitragsbemessungsgrundlage gilt PRO MONAT — payoutInfo erwartet
+     * daher monatsweisen Bruttolohn. Für Aggregate über mehrere Monate ist
+     * payoutInfoForShifts zu verwenden (gruppiert vorher monatsweise). */
+    const MIN_BEITRAGSBEMESSUNG_EUR = 175;
+    const RV_BEITRAG_GESAMT_PCT     = 18.6;
+    const AG_PAUSCHALE_GEWERBE_PCT  = 15;
+    // 32,55 EUR — direkt gerundet, weil 175 * 18.6 / 100 in JS 32.550000000000004 ergibt
+    const MIN_BEITRAG_GESAMT_EUR    = Math.round(MIN_BEITRAGSBEMESSUNG_EUR * RV_BEITRAG_GESAMT_PCT) / 100;
+
+    /* Kaufmännische Rundung (round half up) auf 2 Nachkommastellen. Math.round
+     * driftet bei manchen Floats (z.B. 1.005 → 1.00 statt 1.01), weil 1.005
+     * intern minimal kleiner als 1.005 dargestellt wird. +Number.EPSILON
+     * verschiebt knapp-unter-.5-Werte zuverlässig über die Schwelle. */
+    function roundHalfUp(n) {
+        return Math.round((n + Number.EPSILON) * 100) / 100;
+    }
+
+    /* Berechnet Brutto, RV-Eigenanteil und Auszahlung für EIN MONATSBRUTTO.
+     * - rvBefreit: rvAnteil = 0, Auszahlung = Brutto
+     * - Brutto < 175 EUR: Mindestbeitragsbemessung greift,
+     *     AN-Anteil = 32,55 EUR (Gesamt-Mindestbeitrag) − 15 % AG-Pauschale vom Brutto
+     * - Brutto ≥ 175 EUR: regulär settings.rvAnteilProzent vom Brutto
+     * mindestGreift = true wenn die Mindestlogik aktiv war (für Hinweis im PDF/Export). */
+    function payoutInfo(monatsBrutto, rvBefreit) {
+        const brutto = roundHalfUp(monatsBrutto);
+        if (rvBefreit) {
+            return { brutto, rvAnteil: 0, auszahlung: brutto, mindestGreift: false };
+        }
+        if (brutto < MIN_BEITRAGSBEMESSUNG_EUR) {
+            const agAnteil = roundHalfUp(brutto * AG_PAUSCHALE_GEWERBE_PCT / 100);
+            const rvAnteil = roundHalfUp(MIN_BEITRAG_GESAMT_EUR - agAnteil);
+            return { brutto, rvAnteil, auszahlung: roundHalfUp(brutto - rvAnteil), mindestGreift: true };
+        }
         const pct = Number(settings().rvAnteilProzent) || 0;
-        const rvAnteil = round(b * pct / 100);
-        return { brutto: b, rvAnteil, auszahlung: round(b - rvAnteil) };
+        const rvAnteil = roundHalfUp(brutto * pct / 100);
+        return { brutto, rvAnteil, auszahlung: roundHalfUp(brutto - rvAnteil), mindestGreift: false };
+    }
+
+    /* Aggregiert payoutInfo MONATSWEISE über eine Schicht-Liste und summiert
+     * die Ergebnisse. Pauschal über mehrere Monate gerechnet würde die
+     * Mindestbeitrags-Schwelle (175 EUR) systematisch falsch greifen — daher
+     * vorher pro Monat aufteilen. mindestMonths listet die YYYY-MM, in denen
+     * die Mindestlogik aktiv war (für Hinweis-Anzeige im Output). */
+    function payoutInfoForShifts(shiftList, rvBefreit) {
+        const byMonth = new Map();
+        shiftList.forEach(s => {
+            const month = (s.date || '').slice(0, 7);
+            const cur = byMonth.get(month) || 0;
+            byMonth.set(month, cur + wageFor(s).amount);
+        });
+        let brutto = 0, rvAnteil = 0, auszahlung = 0;
+        const mindestMonths = [];
+        [...byMonth.entries()].forEach(([month, monatsBrutto]) => {
+            const p = payoutInfo(monatsBrutto, rvBefreit);
+            brutto += p.brutto;
+            rvAnteil += p.rvAnteil;
+            auszahlung += p.auszahlung;
+            if (p.mindestGreift) mindestMonths.push(month);
+        });
+        return {
+            brutto: roundHalfUp(brutto),
+            rvAnteil: roundHalfUp(rvAnteil),
+            auszahlung: roundHalfUp(auszahlung),
+            mindestMonths: mindestMonths.sort(),
+        };
+    }
+
+    /* Schicht-für-Schicht-Aufschlüsselung des RV-Anteils für den Export:
+     * pro Monat wird der korrekte Monats-RV-Anteil berechnet und anteilig auf
+     * die einzelnen Schichten verteilt (Schicht-Brutto / Monats-Brutto). Cent-
+     * Differenz aus Rundung wird in der letzten Schicht jedes Monats ausgeglichen,
+     * sodass die Schicht-Summe exakt dem Monats-RV-Anteil entspricht.
+     * Liefert eine Map shiftId → { rvAnteil, auszahlung }. */
+    function perShiftPayoutMap(shiftList) {
+        const result = new Map();
+        const byEmp = new Map();
+        shiftList.forEach(s => {
+            if (!byEmp.has(s.employeeId)) byEmp.set(s.employeeId, []);
+            byEmp.get(s.employeeId).push(s);
+        });
+        byEmp.forEach((empShifts, empId) => {
+            const befreit = empRvBefreit(empId);
+            const byMonth = new Map();
+            empShifts.forEach(s => {
+                const month = (s.date || '').slice(0, 7);
+                if (!byMonth.has(month)) byMonth.set(month, []);
+                byMonth.get(month).push(s);
+            });
+            byMonth.forEach((monthShifts) => {
+                const bruttoPerShift = monthShifts.map(s => wageFor(s).amount);
+                const monatsBrutto = bruttoPerShift.reduce((a, b) => a + b, 0);
+                const monthInfo = payoutInfo(monatsBrutto, befreit);
+                if (befreit || monatsBrutto === 0) {
+                    monthShifts.forEach((s, i) => result.set(s.id, {
+                        rvAnteil: 0,
+                        auszahlung: roundHalfUp(bruttoPerShift[i]),
+                    }));
+                    return;
+                }
+                let rvSoFar = 0;
+                monthShifts.forEach((s, i) => {
+                    const b = bruttoPerShift[i];
+                    const rv = (i === monthShifts.length - 1)
+                        ? roundHalfUp(monthInfo.rvAnteil - rvSoFar)
+                        : roundHalfUp(monthInfo.rvAnteil * b / monatsBrutto);
+                    if (i < monthShifts.length - 1) rvSoFar += rv;
+                    result.set(s.id, { rvAnteil: rv, auszahlung: roundHalfUp(b - rv) });
+                });
+            });
+        });
+        return result;
     }
 
     function renderAdminShifts() {
@@ -1408,20 +1509,30 @@
         // Wenn ein einzelner Mitarbeiter gefiltert ist: Brutto / RV-Anteil /
         // Auszahlung anzeigen — wichtig für die Lohnabrechnung.
         const filteredEmpId = $('#adminEmpFilter').value;
+        let mindestNoteHtml = '';
         if (filteredEmpId && list.length) {
             const empId = Number(filteredEmpId);
             const befreit = empRvBefreit(empId);
-            const p = payoutInfo(totalAmt, befreit);
+            const p = payoutInfoForShifts(list, befreit);
             const pctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
             const rvLabel = befreit
                 ? `RV-Anteil (befreit)`
-                : `RV-Anteil (${pctStr}%)`;
+                : p.mindestMonths.length
+                    ? `RV-Anteil (Mindestbeitrag*)`
+                    : `RV-Anteil (${pctStr}%)`;
             summaryHtmlOut +=
                 `<div class="stat"><div class="label">Brutto ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.brutto)}</div></div>` +
                 `<div class="stat"><div class="label">${rvLabel}</div><div class="value">${befreit ? '–' : '− ' + fmtEUR(p.rvAnteil)}</div></div>` +
                 `<div class="stat"><div class="label">Auszahlung an ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.auszahlung)}</div></div>`;
+            if (p.mindestMonths.length) {
+                mindestNoteHtml =
+                    `<p class="muted small" style="margin-top:.75rem">` +
+                    `* In ${escapeHtml(p.mindestMonths.join(', '))} lag der Bruttolohn unter ${fmtEUR(MIN_BEITRAGSBEMESSUNG_EUR)}. ` +
+                    `Der RV-Eigenanteil wurde aus der Mindestbeitragsbemessungsgrundlage berechnet und liegt daher höher als ${pctStr} %.` +
+                    `</p>`;
+            }
         }
-        $('#adminSummary').innerHTML = summaryHtmlOut;
+        $('#adminSummary').innerHTML = summaryHtmlOut + mindestNoteHtml;
 
         tbody.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => startEditRow(Number(b.dataset.edit)));
         tbody.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
@@ -1545,7 +1656,10 @@
             'Kosten Owner1','Kosten Owner2','Notiz'
         ]];
         const tot = { hours: 0, amount: 0, sBase: 0, bBase: 0 };
-        const byEmp = new Map();
+        // Schicht-RV/Auszahlung wird monatsweise vor-berechnet — sonst würde
+        // pro-Schicht-Multiplikation mit 3,6 % den Mindestbeitrag bei Brutto
+        // < 175 EUR/Monat systematisch unterschätzen.
+        const perShift = perShiftPayoutMap(list);
         list.forEach(s => {
             const w = wageFor(s);
             const c = splitCost(s);
@@ -1558,24 +1672,28 @@
             const r1name = settings().rooms[s.room]?.name || '';
             const r2name = sec ? (settings().rooms[sec]?.name || '') : '';
             const befreit = empRvBefreit(s.employeeId);
-            const p = payoutInfo(w.amount, befreit);
-            const agg = byEmp.get(s.employeeId) || { brutto: 0, rvAnteil: 0, auszahlung: 0, befreit };
-            agg.brutto    += p.brutto;
-            agg.rvAnteil  += p.rvAnteil;
-            agg.auszahlung+= p.auszahlung;
-            agg.befreit = befreit;
-            byEmp.set(s.employeeId, agg);
+            const shiftPay = perShift.get(s.id) || { rvAnteil: 0, auszahlung: w.amount };
             rows.push([
                 s.date, empName(s.employeeId), s.startTime, s.endTime,
                 hours.toFixed(2), s.room, sec || '',
                 sec ? `${r1name} + ${r2name}` : r1name,
                 s.isDouble ? 'Doppel' : 'Einfach',
                 w.rate.toFixed(2), w.amount.toFixed(2),
-                befreit ? '0,00' : p.rvAnteil.toFixed(2),
-                p.auszahlung.toFixed(2),
+                befreit ? '0,00' : shiftPay.rvAnteil.toFixed(2),
+                shiftPay.auszahlung.toFixed(2),
                 c.owner1Base.toFixed(2), c.owner2Base.toFixed(2),
                 s.note || ''
             ]);
+        });
+        // Mitarbeiter-Aggregat ebenfalls monatsweise (für die korrekte Mindest-
+        // beitragslogik). Pro Mitarbeiter eine payoutInfoForShifts-Aufstellung.
+        const empIds = [...new Set(list.map(s => s.employeeId))];
+        const byEmp = new Map();
+        empIds.forEach(empId => {
+            const befreit = empRvBefreit(empId);
+            const empShifts = list.filter(s => s.employeeId === empId);
+            const p = payoutInfoForShifts(empShifts, befreit);
+            byEmp.set(empId, { ...p, befreit });
         });
         const factor = ABGABEN_PCT / 100;
         const sAbg = tot.sBase * factor, sTot = tot.sBase + sAbg;
@@ -1588,17 +1706,30 @@
         if (byEmp.size > 0) {
             rows.push([]);
             rows.push(['LOHN-AUSZAHLUNG PRO MITARBEITER']);
-            rows.push(['Mitarbeiter', 'Brutto (EUR)', `RV-Anteil AN (${rvPctStr}%, EUR)`, 'Auszahlung (EUR)']);
+            rows.push(['Mitarbeiter', 'Brutto (EUR)', `RV-Anteil AN (EUR)`, 'Auszahlung (EUR)']);
             [...byEmp.entries()]
                 .sort((a, b) => empName(a[0]).localeCompare(empName(b[0]), 'de'))
                 .forEach(([empId, a]) => {
+                    const flag = a.befreit ? ' (RV-befreit)'
+                               : a.mindestMonths.length ? ' (*)' : '';
                     rows.push([
-                        empName(empId) + (a.befreit ? ' (RV-befreit)' : ''),
+                        empName(empId) + flag,
                         a.brutto.toFixed(2),
                         a.befreit ? '0,00' : a.rvAnteil.toFixed(2),
                         a.auszahlung.toFixed(2),
                     ]);
                 });
+        }
+        // Sammelhinweis: alle Monate, in denen mindestens ein Mitarbeiter
+        // unter die 175-EUR-Schwelle gefallen ist.
+        const allMindest = new Set();
+        byEmp.forEach(a => a.mindestMonths.forEach(m => allMindest.add(m)));
+        if (allMindest.size > 0) {
+            rows.push([]);
+            rows.push([`(*) Hinweis Mindestbeitragsbemessungsgrundlage`]);
+            rows.push([`In folgenden Monaten lag der Bruttolohn unter ${MIN_BEITRAGSBEMESSUNG_EUR.toFixed(2)} EUR:`]);
+            rows.push([[...allMindest].sort().join(', ')]);
+            rows.push([`Der RV-Eigenanteil wurde dort aus der Mindestbeitragsbemessungsgrundlage berechnet (Gesamtbeitrag ${MIN_BEITRAG_GESAMT_EUR.toFixed(2)} EUR abzüglich AG-Pauschale ${AG_PAUSCHALE_GEWERBE_PCT} % vom Brutto) und liegt daher höher als ${rvPctStr} %.`]);
         }
         rows.push([]);
         rows.push(['Kosten Owner1 (EUR)', tot.sBase.toFixed(2)]);
@@ -1816,13 +1947,17 @@
             doc.text(`${fmtEUR(totalAmt)}`, 540, yAfter, { align: 'right' });
             doc.setFont(undefined, 'normal');
 
-            // RV-Anteil Arbeitnehmer + Auszahlung anzeigen
+            // RV-Anteil Arbeitnehmer + Auszahlung anzeigen. payoutInfo erwartet
+            // ein Monatsbrutto und wendet bei Brutto < 175 EUR automatisch die
+            // Mindestbeitragsbemessung an (mindestGreift kennzeichnet das).
             const p = payoutInfo(totalAmt, !!emp.rvBefreit);
             const rvPctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
             doc.setFontSize(11);
             const rvLabel = emp.rvBefreit
                 ? `RV-Anteil AN (von der RV-Pflicht befreit):`
-                : `RV-Anteil AN (${rvPctStr}%):`;
+                : p.mindestGreift
+                    ? `RV-Anteil AN (Mindestbeitrag, Brutto < ${fmtEUR(MIN_BEITRAGSBEMESSUNG_EUR)}):`
+                    : `RV-Anteil AN (${rvPctStr}%):`;
             doc.text(rvLabel, 40, yAfter + 18);
             doc.text(emp.rvBefreit ? '–' : `− ${fmtEUR(p.rvAnteil)}`, 540, yAfter + 18, { align: 'right' });
 
@@ -1830,6 +1965,24 @@
             doc.text(`Auszahlung an Mitarbeiter:`, 40, yAfter + 38);
             doc.text(fmtEUR(p.auszahlung), 540, yAfter + 38, { align: 'right' });
             doc.setFont(undefined, 'normal');
+
+            // Erläuterung zur Mindestbeitragsbemessung, wenn aktiv.
+            let infoY = yAfter + 60;
+            if (!emp.rvBefreit && p.mindestGreift) {
+                doc.setFontSize(9); doc.setTextColor(120);
+                doc.text(
+                    `Hinweis: Monatsbrutto unter ${fmtEUR(MIN_BEITRAGSBEMESSUNG_EUR)}. ` +
+                    `RV-Eigenanteil = Gesamtbeitrag ${fmtEUR(MIN_BEITRAG_GESAMT_EUR)} ` +
+                    `(${RV_BEITRAG_GESAMT_PCT.toString().replace('.', ',')} % aus ${fmtEUR(MIN_BEITRAGSBEMESSUNG_EUR)})`,
+                    40, infoY
+                );
+                doc.text(
+                    `abzüglich AG-Pauschale ${AG_PAUSCHALE_GEWERBE_PCT} % vom tatsächlichen Bruttolohn ` +
+                    `(${fmtEUR(roundHalfUp(totalAmt * AG_PAUSCHALE_GEWERBE_PCT / 100))}).`,
+                    40, infoY + 12
+                );
+                doc.setTextColor(0);
+            }
 
             doc.setFontSize(9); doc.setTextColor(120);
             doc.text(`Erstellt am ${fmtDateTimeDE(new Date().toISOString())}`, 40, 800);
