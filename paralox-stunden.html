@@ -973,7 +973,7 @@ tr.editing td {
             <div class="table-wrap">
                 <table class="data" id="empTable">
                     <thead>
-                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>RV</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
+                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>RV</th><th>Pauschale</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
                     </thead>
                     <tbody></tbody>
                 </table>
@@ -1007,6 +1007,10 @@ tr.editing td {
                     <span>Von der Rentenversicherungspflicht befreit
                         <small class="hint">(sonst wird der RV-Anteil vom Lohn abgezogen)</small>
                     </span>
+                </label>
+                <label>Monatspauschale (EUR)
+                    <input type="number" step="0.01" min="0" id="empPauschale" value="0">
+                    <small class="hint">Fester Monatsbetrag zusätzlich zum Stundenlohn (z.B. Zulage). Zählt zum Brutto und beeinflusst RV/Pauschalabgaben. Kosten werden 50/50 zwischen den Eigentümern aufgeteilt.</small>
                 </label>
                 <div class="actions">
                     <button class="btn primary" type="submit">Anlegen</button>
@@ -1426,6 +1430,7 @@ window.ParaloxConfig = {
                 isActive: true,
                 rvBefreit: false,
                 assignedTo: 'owner1',
+                monatspauschale: 0,
                 createdAt: new Date().toISOString(),
             },
         ],
@@ -1505,6 +1510,11 @@ window.ParaloxConfig = {
             // Migration: bestehende Mitarbeiter sind standardmäßig RV-pflichtig
             // (rvBefreit=false). Befreiung muss aktiv per Häkchen gesetzt werden.
             if (typeof e.rvBefreit !== 'boolean') e.rvBefreit = false;
+            // Migration: Monatspauschale (EUR/Monat) — zusätzlicher fester Lohn-
+            // Bestandteil neben den Schichten. Default 0 bedeutet "keine Pauschale".
+            if (typeof e.monatspauschale !== 'number' || !isFinite(e.monatspauschale) || e.monatspauschale < 0) {
+                e.monatspauschale = 0;
+            }
         });
         return data;
     }
@@ -2883,7 +2893,20 @@ window.ParaloxConfig = {
         if (!list.length) {
             tbody.innerHTML = `<tr><td colspan="9" class="muted" style="text-align:center;padding:2rem">Keine Einträge in diesem Zeitraum</td></tr>`;
         }
-        $('#mineSummary').innerHTML = summaryHtml(list.length, totalMin, totalAmt);
+        // Monatspauschale: nur wenn beim eigenen User > 0 hinterlegt UND es im
+        // gefilterten Zeitraum tatsächlich Schichten gab (sonst kein Lohnanspruch
+        // aus Pauschale — die App führt keine Urlaub/Krankheit-Listen).
+        const myPauschale = monatspauschaleFor(state.user?.id);
+        let summaryOut = summaryHtml(list.length, totalMin, totalAmt);
+        if (myPauschale > 0 && list.length) {
+            const monthsWithShifts = new Set(list.map(s => (s.date || '').slice(0, 7))).size;
+            const pauschaleTotal = myPauschale * monthsWithShifts;
+            const bruttoMitPauschale = totalAmt + pauschaleTotal;
+            summaryOut +=
+                `<div class="stat"><div class="label">Pauschale (${monthsWithShifts} ${monthsWithShifts === 1 ? 'Monat' : 'Monate'})</div><div class="value">${fmtEUR(pauschaleTotal)}</div></div>` +
+                `<div class="stat"><div class="label">Brutto inkl. Pauschale</div><div class="value">${fmtEUR(bruttoMitPauschale)}</div></div>`;
+        }
+        $('#mineSummary').innerHTML = summaryOut;
         tbody.querySelectorAll('[data-del]').forEach(b => {
             b.onclick = async () => {
                 if (!await confirmModal('Löschen?', `<p>Schicht wirklich löschen?</p>`)) return;
@@ -3022,8 +3045,13 @@ window.ParaloxConfig = {
      * die Ergebnisse. Pauschal über mehrere Monate gerechnet würde die
      * Mindestbeitrags-Schwelle (175 EUR) systematisch falsch greifen — daher
      * vorher pro Monat aufteilen. mindestMonths listet die YYYY-MM, in denen
-     * die Mindestlogik aktiv war (für Hinweis-Anzeige im Output). */
-    function payoutInfoForShifts(shiftList, rvBefreit) {
+     * die Mindestlogik aktiv war (für Hinweis-Anzeige im Output).
+     * pauschalePerMonth: optionale fixe Monatspauschale; wird in jedem Monat
+     * mit ≥1 Schicht zum Brutto addiert (so wirkt sie auch auf die 175-EUR-
+     * Schwelle und Pauschalabgaben). monthCount zählt die abrechnungsrelevanten
+     * Monate, pauschaleTotal ist die effektiv addierte Summe (für Anzeige). */
+    function payoutInfoForShifts(shiftList, rvBefreit, pauschalePerMonth) {
+        const pauschale = Math.max(0, Number(pauschalePerMonth) || 0);
         const byMonth = new Map();
         shiftList.forEach(s => {
             const month = (s.date || '').slice(0, 7);
@@ -3031,8 +3059,11 @@ window.ParaloxConfig = {
             byMonth.set(month, cur + wageFor(s).amount);
         });
         let brutto = 0, rvAnteil = 0, auszahlung = 0;
+        let pauschaleTotal = 0;
         const mindestMonths = [];
-        [...byMonth.entries()].forEach(([month, monatsBrutto]) => {
+        [...byMonth.entries()].forEach(([month, schichtBrutto]) => {
+            const monatsBrutto = schichtBrutto + pauschale;
+            if (pauschale > 0) pauschaleTotal += pauschale;
             const p = payoutInfo(monatsBrutto, rvBefreit);
             brutto += p.brutto;
             rvAnteil += p.rvAnteil;
@@ -3044,7 +3075,15 @@ window.ParaloxConfig = {
             rvAnteil: roundHalfUp(rvAnteil),
             auszahlung: roundHalfUp(auszahlung),
             mindestMonths: mindestMonths.sort(),
+            monthCount: byMonth.size,
+            pauschaleTotal: roundHalfUp(pauschaleTotal),
         };
+    }
+
+    /* Hilfs-Lookup: Monatspauschale eines Mitarbeiters (0 wenn nicht gesetzt). */
+    function monatspauschaleFor(empId) {
+        const e = employees().find(x => x.id === empId);
+        return Math.max(0, Number(e?.monatspauschale) || 0);
     }
 
     /* Schicht-für-Schicht-Aufschlüsselung des RV-Anteils für den Export:
@@ -3062,6 +3101,7 @@ window.ParaloxConfig = {
         });
         byEmp.forEach((empShifts, empId) => {
             const befreit = empRvBefreit(empId);
+            const pauschale = monatspauschaleFor(empId);
             const byMonth = new Map();
             empShifts.forEach(s => {
                 const month = (s.date || '').slice(0, 7);
@@ -3070,22 +3110,37 @@ window.ParaloxConfig = {
             });
             byMonth.forEach((monthShifts) => {
                 const bruttoPerShift = monthShifts.map(s => wageFor(s).amount);
-                const monatsBrutto = bruttoPerShift.reduce((a, b) => a + b, 0);
-                const monthInfo = payoutInfo(monatsBrutto, befreit);
-                if (befreit || monatsBrutto === 0) {
+                const schichtBrutto = bruttoPerShift.reduce((a, b) => a + b, 0);
+                // Monats-Brutto inkl. Pauschale ist die Basis für RV; verteilt
+                // wird der RV-Anteil aber nur auf die Schicht-Brutto-Anteile.
+                // Der auf die Pauschale entfallende RV-Anteil ist Monats-RV
+                // minus Summe der Schicht-Anteile und wird im Summary separat
+                // ausgewiesen (über payoutInfoForShifts), NICHT auf Schichten.
+                const monatsBruttoTotal = schichtBrutto + pauschale;
+                const monthInfo = payoutInfo(monatsBruttoTotal, befreit);
+                if (befreit || monatsBruttoTotal === 0) {
                     monthShifts.forEach((s, i) => result.set(s.id, {
                         rvAnteil: 0,
                         auszahlung: roundHalfUp(bruttoPerShift[i]),
                     }));
                     return;
                 }
+                // Anteilig: jede Schicht trägt schichtBrutto_i / monatsBruttoTotal
+                // des Monats-RV. Die Pauschale trägt den Rest — wird hier nicht
+                // pro Schicht verteilt.
                 let rvSoFar = 0;
                 monthShifts.forEach((s, i) => {
                     const b = bruttoPerShift[i];
-                    const rv = (i === monthShifts.length - 1)
-                        ? roundHalfUp(monthInfo.rvAnteil - rvSoFar)
-                        : roundHalfUp(monthInfo.rvAnteil * b / monatsBrutto);
-                    if (i < monthShifts.length - 1) rvSoFar += rv;
+                    const isLast = i === monthShifts.length - 1;
+                    let rv;
+                    if (isLast && pauschale === 0) {
+                        // Cent-Drift in der letzten Schicht ausgleichen, wenn
+                        // keine Pauschale separat verbleibt.
+                        rv = roundHalfUp(monthInfo.rvAnteil - rvSoFar);
+                    } else {
+                        rv = roundHalfUp(monthInfo.rvAnteil * b / monatsBruttoTotal);
+                        rvSoFar += rv;
+                    }
                     result.set(s.id, { rvAnteil: rv, auszahlung: roundHalfUp(b - rv) });
                 });
             });
@@ -3146,15 +3201,45 @@ window.ParaloxConfig = {
         if (!list.length) {
             tbody.innerHTML = `<tr><td colspan="12" class="muted" style="text-align:center;padding:2rem">Keine Einträge</td></tr>`;
         }
+        // Monatspauschalen aufschlagen: pro Mitarbeiter wird die Pauschale in
+        // jedem Monat mit ≥1 Schicht zu Brutto + Owner1/Owner2-Kosten addiert.
+        // Aufteilung der Pauschale konstant 50/50 (NICHT raum-/anteilsbasiert).
+        const factor = ABGABEN_PCT / 100;
+        const empMonthsMap = new Map();
+        list.forEach(s => {
+            const month = (s.date || '').slice(0, 7);
+            if (!empMonthsMap.has(s.employeeId)) empMonthsMap.set(s.employeeId, new Set());
+            empMonthsMap.get(s.employeeId).add(month);
+        });
+        let pauschaleSum = 0;
+        empMonthsMap.forEach((months, empId) => {
+            const ps = monatspauschaleFor(empId);
+            if (ps > 0) pauschaleSum += ps * months.size;
+        });
+        if (pauschaleSum > 0) {
+            const half = pauschaleSum / 2;
+            agg.sBase  += half;
+            agg.sAbg   += half * factor;
+            agg.sTotal += half * (1 + factor);
+            agg.bBase  += half;
+            agg.bAbg   += half * factor;
+            agg.bTotal += half * (1 + factor);
+            totalAmt   += pauschaleSum;
+        }
         let summaryHtmlOut = adminSummaryHtml(list.length, totalMin, totalAmt, agg);
+        if (pauschaleSum > 0) {
+            summaryHtmlOut += `<div class="stat"><div class="label">davon Monatspauschalen</div><div class="value">${fmtEUR(pauschaleSum)}</div></div>`;
+        }
         // Wenn ein einzelner Mitarbeiter gefiltert ist: Brutto / RV-Anteil /
-        // Auszahlung anzeigen — wichtig für die Lohnabrechnung.
+        // Auszahlung anzeigen — wichtig für die Lohnabrechnung. Pauschale wird
+        // hier in den Monaten mit Schichten ins Brutto eingerechnet.
         const filteredEmpId = $('#adminEmpFilter').value;
         let mindestNoteHtml = '';
         if (filteredEmpId && list.length) {
             const empId = Number(filteredEmpId);
             const befreit = empRvBefreit(empId);
-            const p = payoutInfoForShifts(list, befreit);
+            const ps = monatspauschaleFor(empId);
+            const p = payoutInfoForShifts(list, befreit, ps);
             const pctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
             const rvLabel = befreit
                 ? `RV-Anteil (befreit)`
@@ -3165,6 +3250,10 @@ window.ParaloxConfig = {
                 `<div class="stat"><div class="label">Brutto ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.brutto)}</div></div>` +
                 `<div class="stat"><div class="label">${rvLabel}</div><div class="value">${befreit ? '–' : '− ' + fmtEUR(p.rvAnteil)}</div></div>` +
                 `<div class="stat"><div class="label">Auszahlung an ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.auszahlung)}</div></div>`;
+            if (p.pauschaleTotal > 0) {
+                summaryHtmlOut +=
+                    `<div class="stat"><div class="label">davon Pauschale (${p.monthCount} ${p.monthCount === 1 ? 'Monat' : 'Monate'})</div><div class="value">${fmtEUR(p.pauschaleTotal)}</div></div>`;
+            }
             if (p.mindestMonths.length) {
                 mindestNoteHtml =
                     `<p class="muted small" style="margin-top:.75rem">` +
@@ -3327,16 +3416,29 @@ window.ParaloxConfig = {
             ]);
         });
         // Mitarbeiter-Aggregat ebenfalls monatsweise (für die korrekte Mindest-
-        // beitragslogik). Pro Mitarbeiter eine payoutInfoForShifts-Aufstellung.
+        // beitragslogik). Pro Mitarbeiter eine payoutInfoForShifts-Aufstellung,
+        // inkl. Monatspauschale wenn hinterlegt.
         const empIds = [...new Set(list.map(s => s.employeeId))];
         const byEmp = new Map();
+        let pauschaleSum = 0;
         empIds.forEach(empId => {
             const befreit = empRvBefreit(empId);
+            const ps = monatspauschaleFor(empId);
             const empShifts = list.filter(s => s.employeeId === empId);
-            const p = payoutInfoForShifts(empShifts, befreit);
+            const p = payoutInfoForShifts(empShifts, befreit, ps);
             byEmp.set(empId, { ...p, befreit });
+            pauschaleSum += p.pauschaleTotal;
         });
+        // Monatspauschalen erhöhen Brutto und werden 50/50 zwischen Owner1 und
+        // Owner2 aufgeteilt (NICHT raumbasiert). Die Pauschalabgaben (31,17 %)
+        // fallen darauf wie auf jedes andere Brutto an.
         const factor = ABGABEN_PCT / 100;
+        if (pauschaleSum > 0) {
+            const half = pauschaleSum / 2;
+            tot.sBase += half;
+            tot.bBase += half;
+            tot.amount += pauschaleSum;
+        }
         const sAbg = tot.sBase * factor, sTot = tot.sBase + sAbg;
         const bAbg = tot.bBase * factor, bTot = tot.bBase + bAbg;
         rows.push([]);
@@ -3344,40 +3446,56 @@ window.ParaloxConfig = {
         rows.push(['Einträge', list.length]);
         rows.push(['Stunden gesamt', tot.hours.toFixed(2)]);
         rows.push(['Brutto Mitarbeiter gesamt (EUR)', tot.amount.toFixed(2)]);
+        if (pauschaleSum > 0) {
+            rows.push(['  davon Monatspauschalen (EUR)', pauschaleSum.toFixed(2)]);
+        }
         if (byEmp.size > 0) {
             rows.push([]);
             rows.push(['LOHN-AUSZAHLUNG PRO MITARBEITER']);
-            rows.push(['Mitarbeiter', 'Brutto (EUR)', `RV-Anteil AN (EUR)`, 'Auszahlung (EUR)']);
+            const hasAnyPauschale = [...byEmp.values()].some(a => a.pauschaleTotal > 0);
+            if (hasAnyPauschale) {
+                rows.push(['Mitarbeiter', 'Brutto (EUR)', 'davon Pauschale (EUR)', `RV-Anteil AN (EUR)`, 'Auszahlung (EUR)']);
+            } else {
+                rows.push(['Mitarbeiter', 'Brutto (EUR)', `RV-Anteil AN (EUR)`, 'Auszahlung (EUR)']);
+            }
             [...byEmp.entries()]
                 .sort((a, b) => empName(a[0]).localeCompare(empName(b[0]), 'de'))
                 .forEach(([empId, a]) => {
                     const flag = a.befreit ? ' (RV-befreit)'
                                : a.mindestMonths.length ? ' (*)' : '';
-                    rows.push([
+                    const row = [
                         empName(empId) + flag,
                         a.brutto.toFixed(2),
-                        a.befreit ? '0,00' : a.rvAnteil.toFixed(2),
-                        a.auszahlung.toFixed(2),
-                    ]);
+                    ];
+                    if (hasAnyPauschale) row.push(a.pauschaleTotal.toFixed(2));
+                    row.push(a.befreit ? '0,00' : a.rvAnteil.toFixed(2));
+                    row.push(a.auszahlung.toFixed(2));
+                    rows.push(row);
                 });
         }
         // Sammelhinweis: alle Monate, in denen mindestens ein Mitarbeiter
-        // unter die 175-EUR-Schwelle gefallen ist.
+        // unter die 175-EUR-Schwelle gefallen ist (inkl. Pauschale gerechnet).
         const allMindest = new Set();
         byEmp.forEach(a => a.mindestMonths.forEach(m => allMindest.add(m)));
         if (allMindest.size > 0) {
             rows.push([]);
             rows.push([`(*) Hinweis Mindestbeitragsbemessungsgrundlage`]);
-            rows.push([`In folgenden Monaten lag der Bruttolohn unter ${MIN_BEITRAGSBEMESSUNG_EUR.toFixed(2)} EUR:`]);
+            rows.push([`In folgenden Monaten lag der Bruttolohn (inkl. Monatspauschale) unter ${MIN_BEITRAGSBEMESSUNG_EUR.toFixed(2)} EUR:`]);
             rows.push([[...allMindest].sort().join(', ')]);
             rows.push([`Der RV-Eigenanteil wurde dort aus der Mindestbeitragsbemessungsgrundlage berechnet (Gesamtbeitrag ${MIN_BEITRAG_GESAMT_EUR.toFixed(2)} EUR abzüglich AG-Pauschale ${AG_PAUSCHALE_GEWERBE_PCT} % vom Brutto) und liegt daher höher als ${rvPctStr} %.`]);
         }
         rows.push([]);
         rows.push(['Kosten Owner1 (EUR)', tot.sBase.toFixed(2)]);
+        if (pauschaleSum > 0) {
+            rows.push(['  davon Pauschale-Anteil 50% (EUR)', (pauschaleSum / 2).toFixed(2)]);
+        }
         rows.push([`Abgaben Owner1 (${pctStr}%)`, sAbg.toFixed(2)]);
         rows.push(['Gesamt Owner1 (EUR)', sTot.toFixed(2)]);
         rows.push([]);
         rows.push(['Kosten Owner2 (EUR)', tot.bBase.toFixed(2)]);
+        if (pauschaleSum > 0) {
+            rows.push(['  davon Pauschale-Anteil 50% (EUR)', (pauschaleSum / 2).toFixed(2)]);
+        }
         rows.push([`Abgaben Owner2 (${pctStr}%)`, bAbg.toFixed(2)]);
         rows.push(['Gesamt Owner2 (EUR)', bTot.toFixed(2)]);
         return { rows, list };
@@ -3580,18 +3698,34 @@ window.ParaloxConfig = {
                 },
             });
 
-            const yAfter = doc.lastAutoTable.finalY + 20;
+            // Monatspauschale (falls hinterlegt) wird wie ein zusätzlicher Lohn-
+            // Bestandteil behandelt: erscheint als eigene Zeile, fließt ins
+            // Brutto und damit in die RV-/Mindestbeitrag-Berechnung ein.
+            const pauschale = Math.max(0, Number(emp.monatspauschale) || 0);
+            const bruttoGesamt = totalAmt + pauschale;
+
+            let yAfter = doc.lastAutoTable.finalY + 20;
             doc.setFontSize(11);
+            if (pauschale > 0) {
+                doc.text(`Lohn aus Schichten:`, 40, yAfter);
+                doc.text(`${(totalMin / 60).toFixed(2).replace('.', ',')} Std`, 300, yAfter, { align: 'right' });
+                doc.text(`${fmtEUR(totalAmt)}`, 540, yAfter, { align: 'right' });
+                doc.text(`+ Monatspauschale:`, 40, yAfter + 16);
+                doc.text(`${fmtEUR(pauschale)}`, 540, yAfter + 16, { align: 'right' });
+                yAfter += 32;
+            }
             doc.setFont(undefined, 'bold');
             doc.text(`Brutto-Lohn:`, 40, yAfter);
-            doc.text(`${(totalMin / 60).toFixed(2).replace('.', ',')} Std`, 300, yAfter, { align: 'right' });
-            doc.text(`${fmtEUR(totalAmt)}`, 540, yAfter, { align: 'right' });
+            if (pauschale === 0) {
+                doc.text(`${(totalMin / 60).toFixed(2).replace('.', ',')} Std`, 300, yAfter, { align: 'right' });
+            }
+            doc.text(`${fmtEUR(bruttoGesamt)}`, 540, yAfter, { align: 'right' });
             doc.setFont(undefined, 'normal');
 
             // RV-Anteil Arbeitnehmer + Auszahlung anzeigen. payoutInfo erwartet
-            // ein Monatsbrutto und wendet bei Brutto < 175 EUR automatisch die
-            // Mindestbeitragsbemessung an (mindestGreift kennzeichnet das).
-            const p = payoutInfo(totalAmt, !!emp.rvBefreit);
+            // ein Monatsbrutto (inkl. Pauschale) und wendet bei Brutto < 175 EUR
+            // automatisch die Mindestbeitragsbemessung an.
+            const p = payoutInfo(bruttoGesamt, !!emp.rvBefreit);
             const rvPctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
             doc.setFontSize(11);
             const rvLabel = emp.rvBefreit
@@ -3619,7 +3753,7 @@ window.ParaloxConfig = {
                 );
                 doc.text(
                     `abzüglich AG-Pauschale ${AG_PAUSCHALE_GEWERBE_PCT} % vom tatsächlichen Bruttolohn ` +
-                    `(${fmtEUR(roundHalfUp(totalAmt * AG_PAUSCHALE_GEWERBE_PCT / 100))}).`,
+                    `(${fmtEUR(roundHalfUp(bruttoGesamt * AG_PAUSCHALE_GEWERBE_PCT / 100))}).`,
                     40, infoY + 12
                 );
                 doc.setTextColor(0);
@@ -3671,18 +3805,24 @@ window.ParaloxConfig = {
             const rvBadge = e.rvBefreit
                 ? '<span class="badge muted" title="Befreit — kein RV-Anteil-Abzug">RV-befreit</span>'
                 : '<span class="badge" title="RV-pflichtig — AN-Anteil wird vom Lohn abgezogen">RV-pflichtig</span>';
+            const pauschaleVal = Number(e.monatspauschale) || 0;
+            const pauschaleCell = pauschaleVal > 0
+                ? `<span class="badge">${fmtEUR(pauschaleVal)}</span>`
+                : '<span class="muted small">–</span>';
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td>${escapeHtml(e.name)}</td>
                 <td>${roleBadge}</td>
                 <td><span class="badge">${escapeHtml(arbeitgeberLabel)}</span></td>
                 <td>${rvBadge}</td>
+                <td>${pauschaleCell}</td>
                 <td>${e.isActive ? '<span class="badge ok">Aktiv</span>' : '<span class="badge muted">Inaktiv</span>'}</td>
                 <td class="muted small">${e.createdAt ? fmtDateDE(e.createdAt.slice(0, 10)) : ''}</td>
                 <td>${admin ? `
                     <button class="btn small" data-emp-rename="${e.id}">Umbenennen</button>
                     <button class="btn small" data-emp-pw="${e.id}">Passwort</button>
                     <button class="btn small" data-emp-assign="${e.id}">Arbeitgeber wechseln</button>
+                    <button class="btn small" data-emp-pauschale="${e.id}">Pauschale ändern</button>
                     <button class="btn small" data-emp-admin="${e.id}">${e.isAdmin ? 'Admin entziehen' : 'Admin geben'}</button>
                     <button class="btn small" data-emp-acc="${e.id}">${e.isAccountant ? 'Buchhaltung entziehen' : 'Buchhaltung geben'}</button>
                     <button class="btn small" data-emp-rv="${e.id}">${e.rvBefreit ? 'RV-Befreiung entziehen' : 'RV-Befreiung geben'}</button>
@@ -3759,6 +3899,21 @@ window.ParaloxConfig = {
             renderEmployees();
             toast(emp.rvBefreit ? 'Mitarbeiter ist RV-befreit' : 'Mitarbeiter ist RV-pflichtig', 'success');
         });
+        tbody.querySelectorAll('[data-emp-pauschale]').forEach(b => b.onclick = async () => {
+            const emp = employees().find(x => x.id === Number(b.dataset.empPauschale));
+            const r = await promptModal('Monatspauschale ändern', [{
+                key: 'eur',
+                label: 'Pauschale in EUR (0 = keine)',
+                value: String(Number(emp.monatspauschale) || 0),
+            }]);
+            if (!r) return;
+            const v = Number(String(r.eur).replace(',', '.'));
+            if (!isFinite(v) || v < 0) { toast('Bitte einen Betrag ≥ 0 eingeben.', 'error'); return; }
+            emp.monatspauschale = Math.round(v * 100) / 100;
+            saveData();
+            renderEmployees();
+            toast(`Pauschale: ${fmtEUR(emp.monatspauschale)}`, 'success');
+        });
         tbody.querySelectorAll('[data-emp-active]').forEach(b => b.onclick = async () => {
             const emp = employees().find(x => x.id === Number(b.dataset.empActive));
             if (emp.isActive) {
@@ -3819,6 +3974,8 @@ window.ParaloxConfig = {
         let hashed;
         try { hashed = hashPassword(pw); }
         catch (e) { toast(e.message, 'error'); return; }
+        const pauschaleRaw = Number($('#empPauschale').value);
+        const pauschale = isFinite(pauschaleRaw) && pauschaleRaw >= 0 ? pauschaleRaw : 0;
         state.data.employees.push({
             id: window.ParaloxStorage.nextId(employees()),
             name,
@@ -3828,6 +3985,7 @@ window.ParaloxConfig = {
             rvBefreit: $('#empRvBefreit').checked,
             isActive: true,
             assignedTo: $('#empAssigned').value,
+            monatspauschale: pauschale,
             createdAt: new Date().toISOString(),
         });
         saveData();
@@ -3837,6 +3995,7 @@ window.ParaloxConfig = {
         $('#empAccountant').checked = false;
         $('#empRvBefreit').checked = false;
         $('#empAssigned').value = 'owner1';
+        $('#empPauschale').value = '0';
         toast('Mitarbeiter angelegt', 'success');
         renderEmployees();
         // Frisch angelegter Mitarbeiter sofort im Schicht-Dropdown verfügbar.

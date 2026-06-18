@@ -86,6 +86,7 @@
                 isActive: true,
                 rvBefreit: false,
                 assignedTo: 'owner1',
+                monatspauschale: 0,
                 createdAt: new Date().toISOString(),
             },
         ],
@@ -165,6 +166,11 @@
             // Migration: bestehende Mitarbeiter sind standardmäßig RV-pflichtig
             // (rvBefreit=false). Befreiung muss aktiv per Häkchen gesetzt werden.
             if (typeof e.rvBefreit !== 'boolean') e.rvBefreit = false;
+            // Migration: Monatspauschale (EUR/Monat) — zusätzlicher fester Lohn-
+            // Bestandteil neben den Schichten. Default 0 bedeutet "keine Pauschale".
+            if (typeof e.monatspauschale !== 'number' || !isFinite(e.monatspauschale) || e.monatspauschale < 0) {
+                e.monatspauschale = 0;
+            }
         });
         return data;
     }

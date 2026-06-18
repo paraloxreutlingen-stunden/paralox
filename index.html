@@ -201,7 +201,7 @@
             <div class="table-wrap">
                 <table class="data" id="empTable">
                     <thead>
-                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>RV</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
+                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>RV</th><th>Pauschale</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
                     </thead>
                     <tbody></tbody>
                 </table>
@@ -235,6 +235,10 @@
                     <span>Von der Rentenversicherungspflicht befreit
                         <small class="hint">(sonst wird der RV-Anteil vom Lohn abgezogen)</small>
                     </span>
+                </label>
+                <label>Monatspauschale (EUR)
+                    <input type="number" step="0.01" min="0" id="empPauschale" value="0">
+                    <small class="hint">Fester Monatsbetrag zusätzlich zum Stundenlohn (z.B. Zulage). Zählt zum Brutto und beeinflusst RV/Pauschalabgaben. Kosten werden 50/50 zwischen den Eigentümern aufgeteilt.</small>
                 </label>
                 <div class="actions">
                     <button class="btn primary" type="submit">Anlegen</button>
