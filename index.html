@@ -240,6 +240,10 @@
                     <input type="number" step="0.01" min="0" id="empPauschale" value="0">
                     <small class="hint">Fester Monatsbetrag zusätzlich zum Stundenlohn (z.B. Zulage). Zählt zum Brutto und beeinflusst RV/Pauschalabgaben. Kosten werden 50/50 zwischen den Eigentümern aufgeteilt.</small>
                 </label>
+                <label>Pauschale gilt ab Monat
+                    <input type="month" id="empPauschaleAb">
+                    <small class="hint">Ab diesem Monat wird die Pauschale berechnet. Leer = in allen Monaten mit Schichten (auch rückwirkend).</small>
+                </label>
                 <div class="actions">
                     <button class="btn primary" type="submit">Anlegen</button>
                 </div>

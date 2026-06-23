@@ -1260,15 +1260,23 @@
         // Monatspauschale: nur wenn beim eigenen User > 0 hinterlegt UND es im
         // gefilterten Zeitraum tatsächlich Schichten gab (sonst kein Lohnanspruch
         // aus Pauschale — die App führt keine Urlaub/Krankheit-Listen).
-        const myPauschale = monatspauschaleFor(state.user?.id);
+        const myId = state.user?.id;
         let summaryOut = summaryHtml(list.length, totalMin, totalAmt);
-        if (myPauschale > 0 && list.length) {
-            const monthsWithShifts = new Set(list.map(s => (s.date || '').slice(0, 7))).size;
-            const pauschaleTotal = myPauschale * monthsWithShifts;
-            const bruttoMitPauschale = totalAmt + pauschaleTotal;
-            summaryOut +=
-                `<div class="stat"><div class="label">Pauschale (${monthsWithShifts} ${monthsWithShifts === 1 ? 'Monat' : 'Monate'})</div><div class="value">${fmtEUR(pauschaleTotal)}</div></div>` +
-                `<div class="stat"><div class="label">Brutto inkl. Pauschale</div><div class="value">${fmtEUR(bruttoMitPauschale)}</div></div>`;
+        if (list.length) {
+            // Pro Monat einzeln aufsummieren, damit der Stichtag (pauschaleAb)
+            // greift und Monate vor dem Stichtag keine Pauschale beitragen.
+            const monthsWithShifts = [...new Set(list.map(s => (s.date || '').slice(0, 7)))];
+            let pauschaleTotal = 0, pauschaleMonate = 0;
+            monthsWithShifts.forEach(m => {
+                const ps = monatspauschaleForMonth(myId, m);
+                if (ps > 0) { pauschaleTotal += ps; pauschaleMonate += 1; }
+            });
+            if (pauschaleTotal > 0) {
+                const bruttoMitPauschale = totalAmt + pauschaleTotal;
+                summaryOut +=
+                    `<div class="stat"><div class="label">Pauschale (${pauschaleMonate} ${pauschaleMonate === 1 ? 'Monat' : 'Monate'})</div><div class="value">${fmtEUR(pauschaleTotal)}</div></div>` +
+                    `<div class="stat"><div class="label">Brutto inkl. Pauschale</div><div class="value">${fmtEUR(bruttoMitPauschale)}</div></div>`;
+            }
         }
         $('#mineSummary').innerHTML = summaryOut;
         tbody.querySelectorAll('[data-del]').forEach(b => {
@@ -1410,12 +1418,12 @@
      * Mindestbeitrags-Schwelle (175 EUR) systematisch falsch greifen — daher
      * vorher pro Monat aufteilen. mindestMonths listet die YYYY-MM, in denen
      * die Mindestlogik aktiv war (für Hinweis-Anzeige im Output).
-     * pauschalePerMonth: optionale fixe Monatspauschale; wird in jedem Monat
-     * mit ≥1 Schicht zum Brutto addiert (so wirkt sie auch auf die 175-EUR-
-     * Schwelle und Pauschalabgaben). monthCount zählt die abrechnungsrelevanten
-     * Monate, pauschaleTotal ist die effektiv addierte Summe (für Anzeige). */
-    function payoutInfoForShifts(shiftList, rvBefreit, pauschalePerMonth) {
-        const pauschale = Math.max(0, Number(pauschalePerMonth) || 0);
+     * empId: Mitarbeiter, dessen Monatspauschale berücksichtigt wird; sie wird
+     * nur in Monaten ab dem Stichtag (pauschaleAb) zum Brutto addiert (so wirkt
+     * sie auch auf die 175-EUR-Schwelle und Pauschalabgaben). monthCount zählt
+     * die Monate, in denen die Pauschale tatsächlich griff; pauschaleTotal ist
+     * die effektiv addierte Summe (für Anzeige). */
+    function payoutInfoForShifts(shiftList, rvBefreit, empId) {
         const byMonth = new Map();
         shiftList.forEach(s => {
             const month = (s.date || '').slice(0, 7);
@@ -1423,11 +1431,12 @@
             byMonth.set(month, cur + wageFor(s).amount);
         });
         let brutto = 0, rvAnteil = 0, auszahlung = 0;
-        let pauschaleTotal = 0;
+        let pauschaleTotal = 0, pauschaleMonths = 0;
         const mindestMonths = [];
         [...byMonth.entries()].forEach(([month, schichtBrutto]) => {
+            const pauschale = monatspauschaleForMonth(empId, month);
             const monatsBrutto = schichtBrutto + pauschale;
-            if (pauschale > 0) pauschaleTotal += pauschale;
+            if (pauschale > 0) { pauschaleTotal += pauschale; pauschaleMonths += 1; }
             const p = payoutInfo(monatsBrutto, rvBefreit);
             brutto += p.brutto;
             rvAnteil += p.rvAnteil;
@@ -1439,15 +1448,38 @@
             rvAnteil: roundHalfUp(rvAnteil),
             auszahlung: roundHalfUp(auszahlung),
             mindestMonths: mindestMonths.sort(),
-            monthCount: byMonth.size,
+            monthCount: pauschaleMonths,
             pauschaleTotal: roundHalfUp(pauschaleTotal),
         };
     }
 
-    /* Hilfs-Lookup: Monatspauschale eines Mitarbeiters (0 wenn nicht gesetzt). */
+    /* Hilfs-Lookup: Monatspauschale eines Mitarbeiters (0 wenn nicht gesetzt).
+     * Dies ist der reine Betrag OHNE Stichtag-Prüfung — nur für Anzeige (z. B.
+     * Badge in der Mitarbeiterliste). Für die Lohnberechnung immer
+     * monatspauschaleForMonth() verwenden, damit der Stichtag greift. */
     function monatspauschaleFor(empId) {
         const e = employees().find(x => x.id === empId);
         return Math.max(0, Number(e?.monatspauschale) || 0);
+    }
+
+    /* Stichtag (YYYY-MM), ab dem die Monatspauschale eines Mitarbeiters gilt.
+     * Leerer String = keine Beschränkung (Pauschale gilt in allen Monaten). */
+    function pauschaleAbFor(empId) {
+        const e = employees().find(x => x.id === empId);
+        const v = e?.pauschaleAb;
+        return (typeof v === 'string' && /^\d{4}-\d{2}$/.test(v)) ? v : '';
+    }
+
+    /* Monatspauschale eines Mitarbeiters FÜR EINEN BESTIMMTEN MONAT (YYYY-MM).
+     * Liefert 0, wenn keine Pauschale gesetzt ist ODER der Monat vor dem
+     * Stichtag pauschaleAb liegt. So gilt die Pauschale erst ab dem Stichtag
+     * und wird nicht rückwirkend in ältere Monate eingerechnet. */
+    function monatspauschaleForMonth(empId, month) {
+        const ps = monatspauschaleFor(empId);
+        if (ps <= 0) return 0;
+        const ab = pauschaleAbFor(empId);
+        if (ab && month < ab) return 0;
+        return ps;
     }
 
     /* Schicht-für-Schicht-Aufschlüsselung des RV-Anteils für den Export:
@@ -1465,14 +1497,15 @@
         });
         byEmp.forEach((empShifts, empId) => {
             const befreit = empRvBefreit(empId);
-            const pauschale = monatspauschaleFor(empId);
             const byMonth = new Map();
             empShifts.forEach(s => {
                 const month = (s.date || '').slice(0, 7);
                 if (!byMonth.has(month)) byMonth.set(month, []);
                 byMonth.get(month).push(s);
             });
-            byMonth.forEach((monthShifts) => {
+            byMonth.forEach((monthShifts, month) => {
+                // Pauschale dieses Monats — 0, wenn der Monat vor dem Stichtag liegt.
+                const pauschale = monatspauschaleForMonth(empId, month);
                 const bruttoPerShift = monthShifts.map(s => wageFor(s).amount);
                 const schichtBrutto = bruttoPerShift.reduce((a, b) => a + b, 0);
                 // Monats-Brutto inkl. Pauschale ist die Basis für RV; verteilt
@@ -1577,8 +1610,9 @@
         });
         let pauschaleSum = 0;
         empMonthsMap.forEach((months, empId) => {
-            const ps = monatspauschaleFor(empId);
-            if (ps > 0) pauschaleSum += ps * months.size;
+            // Pro Monat einzeln, damit der Stichtag (pauschaleAb) greift und
+            // Monate vor dem Stichtag keine Pauschale beitragen.
+            months.forEach(month => { pauschaleSum += monatspauschaleForMonth(empId, month); });
         });
         if (pauschaleSum > 0) {
             const half = pauschaleSum / 2;
@@ -1602,8 +1636,7 @@
         if (filteredEmpId && list.length) {
             const empId = Number(filteredEmpId);
             const befreit = empRvBefreit(empId);
-            const ps = monatspauschaleFor(empId);
-            const p = payoutInfoForShifts(list, befreit, ps);
+            const p = payoutInfoForShifts(list, befreit, empId);
             const pctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
             const rvLabel = befreit
                 ? `RV-Anteil (befreit)`
@@ -1787,9 +1820,8 @@
         let pauschaleSum = 0;
         empIds.forEach(empId => {
             const befreit = empRvBefreit(empId);
-            const ps = monatspauschaleFor(empId);
             const empShifts = list.filter(s => s.employeeId === empId);
-            const p = payoutInfoForShifts(empShifts, befreit, ps);
+            const p = payoutInfoForShifts(empShifts, befreit, empId);
             byEmp.set(empId, { ...p, befreit });
             pauschaleSum += p.pauschaleTotal;
         });
@@ -2064,8 +2096,11 @@
 
             // Monatspauschale (falls hinterlegt) wird wie ein zusätzlicher Lohn-
             // Bestandteil behandelt: erscheint als eigene Zeile, fließt ins
-            // Brutto und damit in die RV-/Mindestbeitrag-Berechnung ein.
-            const pauschale = Math.max(0, Number(emp.monatspauschale) || 0);
+            // Brutto und damit in die RV-/Mindestbeitrag-Berechnung ein. Greift
+            // nur ab dem Stichtag — das PDF betrifft genau einen Monat, der sich
+            // aus den Schichten ableiten lässt.
+            const pdfMonth = (list[0]?.date || '').slice(0, 7);
+            const pauschale = monatspauschaleForMonth(emp.id, pdfMonth);
             const bruttoGesamt = totalAmt + pauschale;
 
             let yAfter = doc.lastAutoTable.finalY + 20;
@@ -2170,8 +2205,9 @@
                 ? '<span class="badge muted" title="Befreit — kein RV-Anteil-Abzug">RV-befreit</span>'
                 : '<span class="badge" title="RV-pflichtig — AN-Anteil wird vom Lohn abgezogen">RV-pflichtig</span>';
             const pauschaleVal = Number(e.monatspauschale) || 0;
+            const pauschaleAbVal = (typeof e.pauschaleAb === 'string' && /^\d{4}-\d{2}$/.test(e.pauschaleAb)) ? e.pauschaleAb : '';
             const pauschaleCell = pauschaleVal > 0
-                ? `<span class="badge">${fmtEUR(pauschaleVal)}</span>`
+                ? `<span class="badge">${fmtEUR(pauschaleVal)}</span>${pauschaleAbVal ? ` <span class="muted small">ab ${escapeHtml(pauschaleAbVal)}</span>` : ''}`
                 : '<span class="muted small">–</span>';
             const tr = document.createElement('tr');
             tr.innerHTML = `
@@ -2265,18 +2301,32 @@
         });
         tbody.querySelectorAll('[data-emp-pauschale]').forEach(b => b.onclick = async () => {
             const emp = employees().find(x => x.id === Number(b.dataset.empPauschale));
-            const r = await promptModal('Monatspauschale ändern', [{
-                key: 'eur',
-                label: 'Pauschale in EUR (0 = keine)',
-                value: String(Number(emp.monatspauschale) || 0),
-            }]);
+            const curAb = (typeof emp.pauschaleAb === 'string' && /^\d{4}-\d{2}$/.test(emp.pauschaleAb)) ? emp.pauschaleAb : '';
+            const r = await promptModal('Monatspauschale ändern', [
+                {
+                    key: 'eur',
+                    label: 'Pauschale in EUR (0 = keine)',
+                    value: String(Number(emp.monatspauschale) || 0),
+                },
+                {
+                    key: 'ab',
+                    label: 'Gilt ab Monat (leer = alle Monate)',
+                    type: 'month',
+                    value: curAb,
+                },
+            ]);
             if (!r) return;
             const v = Number(String(r.eur).replace(',', '.'));
             if (!isFinite(v) || v < 0) { toast('Bitte einen Betrag ≥ 0 eingeben.', 'error'); return; }
+            const ab = String(r.ab || '').trim();
+            if (ab && !/^\d{4}-\d{2}$/.test(ab)) { toast('Ungültiger Monat (Format YYYY-MM).', 'error'); return; }
             emp.monatspauschale = Math.round(v * 100) / 100;
+            // Stichtag nur sinnvoll, wenn es eine Pauschale gibt; sonst leeren.
+            emp.pauschaleAb = emp.monatspauschale > 0 ? ab : '';
             saveData();
             renderEmployees();
-            toast(`Pauschale: ${fmtEUR(emp.monatspauschale)}`, 'success');
+            const abMsg = (emp.monatspauschale > 0 && ab) ? ` ab ${ab}` : '';
+            toast(`Pauschale: ${fmtEUR(emp.monatspauschale)}${abMsg}`, 'success');
         });
         tbody.querySelectorAll('[data-emp-active]').forEach(b => b.onclick = async () => {
             const emp = employees().find(x => x.id === Number(b.dataset.empActive));
@@ -2340,6 +2390,10 @@
         catch (e) { toast(e.message, 'error'); return; }
         const pauschaleRaw = Number($('#empPauschale').value);
         const pauschale = isFinite(pauschaleRaw) && pauschaleRaw >= 0 ? pauschaleRaw : 0;
+        // Stichtag nur übernehmen, wenn er das Format YYYY-MM hat und es eine
+        // Pauschale gibt; ansonsten leer (gilt dann ohne Beschränkung).
+        const pauschaleAbRaw = String($('#empPauschaleAb').value || '').trim();
+        const pauschaleAb = (pauschale > 0 && /^\d{4}-\d{2}$/.test(pauschaleAbRaw)) ? pauschaleAbRaw : '';
         state.data.employees.push({
             id: window.ParaloxStorage.nextId(employees()),
             name,
@@ -2350,6 +2404,7 @@
             isActive: true,
             assignedTo: $('#empAssigned').value,
             monatspauschale: pauschale,
+            pauschaleAb,
             createdAt: new Date().toISOString(),
         });
         saveData();
@@ -2360,6 +2415,7 @@
         $('#empRvBefreit').checked = false;
         $('#empAssigned').value = 'owner1';
         $('#empPauschale').value = '0';
+        $('#empPauschaleAb').value = '';
         toast('Mitarbeiter angelegt', 'success');
         renderEmployees();
         // Frisch angelegter Mitarbeiter sofort im Schicht-Dropdown verfügbar.

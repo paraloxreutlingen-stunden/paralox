@@ -87,6 +87,7 @@
                 rvBefreit: false,
                 assignedTo: 'owner1',
                 monatspauschale: 0,
+                pauschaleAb: '',
                 createdAt: new Date().toISOString(),
             },
         ],
@@ -170,6 +171,16 @@
             // Bestandteil neben den Schichten. Default 0 bedeutet "keine Pauschale".
             if (typeof e.monatspauschale !== 'number' || !isFinite(e.monatspauschale) || e.monatspauschale < 0) {
                 e.monatspauschale = 0;
+            }
+            // Migration: Stichtag (YYYY-MM), ab dem die Monatspauschale gilt.
+            // Vor der Einführung des Stichtags wurde die Pauschale rückwirkend in
+            // ALLEN Monaten mit Schichten verrechnet. Bestehende Pauschalen werden
+            // daher auf den Einführungsmonat 2026-06 datiert, damit sie nicht
+            // weiter rückwirkend in ältere Monate fließen. Leerer String = keine
+            // Beschränkung (Pauschale gilt in allen Monaten — z. B. wenn keine
+            // Pauschale gesetzt ist).
+            if (typeof e.pauschaleAb !== 'string' || !/^\d{4}-\d{2}$/.test(e.pauschaleAb)) {
+                e.pauschaleAb = e.monatspauschale > 0 ? '2026-06' : '';
             }
         });
         return data;
