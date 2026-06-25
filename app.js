@@ -301,9 +301,31 @@
 
     // ---------- Berechnung ----------
 
+    // Datierte Lohnhistorie (chronologisch sortiert, von normalize() garantiert
+    // nicht leer). Quelle der Wahrheit für alle Verdienstberechnungen.
+    function wageHistory() {
+        const h = settings().wageHistory;
+        return Array.isArray(h) ? h : [];
+    }
+    // Die Stundensätze, die an einem bestimmten Datum (YYYY-MM-DD) galten.
+    // Liefert den jüngsten Eintrag mit gueltigAb <= date. Für Daten vor dem
+    // ersten Eintrag fällt es auf den frühesten Satz zurück, damit nie ein
+    // Verdienst von 0 entsteht (Sicherheitsnetz, falls der Migrationseintrag
+    // mal gelöscht würde).
+    function wageRatesFor(date) {
+        const hist = wageHistory();
+        if (hist.length === 0) return { single: 0, double: 0 };
+        let chosen = hist[0];
+        for (const h of hist) {
+            if (h.gueltigAb <= date) chosen = h;
+            else break;
+        }
+        return { single: chosen.single, double: chosen.double };
+    }
+
     function wageFor(shift) {
-        const s = settings();
-        const rate = shift.isDouble ? s.wageDouble : s.wageSingle;
+        const rates = wageRatesFor(shift.date);
+        const rate = shift.isDouble ? rates.double : rates.single;
         const mins = minutesOf(shift.startTime, shift.endTime);
         return { minutes: mins, rate, amount: (mins / 60) * rate };
     }
@@ -505,7 +527,9 @@
         const isD = $('#sfDouble').checked;
         if (!start || !end) { $('#sfPreview').textContent = ''; return; }
         const mins = minutesOf(start, end);
-        const rate = isD ? settings().wageDouble : settings().wageSingle;
+        // Satz, der am gewählten Schicht-Datum gilt (nicht der aktuellste).
+        const rates = wageRatesFor($('#sfDate').value || todayISO());
+        const rate = isD ? rates.double : rates.single;
         const amount = (mins / 60) * rate;
         $('#sfPreview').textContent = `${fmtHours(mins)} Std · ${fmtEUR(rate)} /h · ${fmtEUR(amount)}`;
     }
@@ -901,7 +925,9 @@
 
     // ---------- Shift Form ----------
 
-    ['sfStart','sfEnd','sfDouble'].forEach(id => {
+    // sfDate ist mit dabei, weil der gültige Stundensatz jetzt vom Schicht-Datum
+    // abhängt (Lohnhistorie) — die Vorschau muss bei Datumswechsel neu rechnen.
+    ['sfStart','sfEnd','sfDouble','sfDate'].forEach(id => {
         $('#' + id).addEventListener('change', renderPreview);
         $('#' + id).addEventListener('input', renderPreview);
     });
@@ -2425,8 +2451,6 @@
     // ---------- Einstellungen ----------
 
     function renderSettings() {
-        $('#setSingle').value = settings().wageSingle;
-        $('#setDouble').value = settings().wageDouble;
         $('#setRvAnteil').value = settings().rvAnteilProzent;
         const labels = settings().labels || {};
         $('#setLabelOwner1').value = labels.owner1 || '';
@@ -2447,8 +2471,10 @@
         renderBackupStatus();
         const admin = isAdmin();
         $$('#settingsForm input, #settingsForm button').forEach(el => el.disabled = !admin);
+        $$('#wageAddForm input, #wageAddForm button').forEach(el => el.disabled = !admin);
         $$('#backupPasswordForm input, #backupPasswordForm button').forEach(el => el.disabled = !admin);
         $('#settingsForm').title = admin ? '' : 'Nur Admins können Einstellungen ändern.';
+        renderWageHistory();
         const tbody = $('#roomsTable tbody');
         tbody.innerHTML = '';
         Object.entries(settings().rooms).forEach(([code, r]) => {
@@ -2462,6 +2488,98 @@
             tbody.appendChild(tr);
         });
     }
+
+    // Lohnhistorie-Tabelle rendern. Neueste zuerst, damit der aktuell gültige
+    // Satz oben steht. Pro Zeile ein Löschen-Button (nur Admin) — der älteste
+    // Eintrag bleibt geschützt, weil er die Untergrenze für alte Schichten ist.
+    function renderWageHistory() {
+        const tbody = $('#wageHistoryTable tbody');
+        if (!tbody) return;
+        const hist = wageHistory();
+        const admin = isAdmin();
+        tbody.innerHTML = '';
+        // Kopie absteigend sortieren, ohne das Original anzufassen.
+        const rows = hist.slice().sort((a, b) => b.gueltigAb.localeCompare(a.gueltigAb));
+        rows.forEach((h) => {
+            const isOldest = hist.length > 1 && h.gueltigAb === hist[0].gueltigAb;
+            const tr = document.createElement('tr');
+            const delCell = (admin && !isOldest)
+                ? `<button class="btn small danger" data-del-wage="${escapeHtml(h.gueltigAb)}">Löschen</button>`
+                : (isOldest ? '<span class="muted small">Basis</span>' : '');
+            tr.innerHTML = `
+                <td>${escapeHtml(fmtDateDE(h.gueltigAb))}</td>
+                <td class="num">${fmtEUR(h.single)}</td>
+                <td class="num">${fmtEUR(h.double)}</td>
+                <td>${delCell}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        // Datum-Feld auf heute vorbelegen, Beträge mit dem aktuell gültigen Satz.
+        if (!$('#wageNewDate').value) $('#wageNewDate').value = todayISO();
+        const latest = hist[hist.length - 1] || { single: 0, double: 0 };
+        if (!$('#wageNewSingle').value) $('#wageNewSingle').value = latest.single;
+        if (!$('#wageNewDouble').value) $('#wageNewDouble').value = latest.double;
+    }
+
+    // Neuen datierten Satz hinzufügen (oder einen bestehenden mit gleichem
+    // Stichtag ersetzen). Verändert keine alten Schichten — die rechnen weiter
+    // mit dem Satz, der an ihrem Datum gilt.
+    $('#wageAddForm').addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        if (!isAdmin()) return;
+        const date = $('#wageNewDate').value;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            toast('Bitte ein gültiges Stichtag-Datum wählen.', 'error');
+            return;
+        }
+        const single = Math.max(0, Number($('#wageNewSingle').value) || 0);
+        const double = Math.max(0, Number($('#wageNewDouble').value) || 0);
+        const hist = wageHistory();
+        const existing = hist.find(h => h.gueltigAb === date);
+        if (existing) {
+            existing.single = single;
+            existing.double = double;
+        } else {
+            hist.push({ gueltigAb: date, single, double });
+        }
+        hist.sort((a, b) => a.gueltigAb.localeCompare(b.gueltigAb));
+        // Spiegel-Felder auf den jüngsten Satz nachziehen.
+        const latest = hist[hist.length - 1];
+        settings().wageSingle = latest.single;
+        settings().wageDouble = latest.double;
+        saveData();
+        // Eingabefelder zurücksetzen, damit renderWageHistory sie neu vorbelegt.
+        $('#wageNewDate').value = '';
+        $('#wageNewSingle').value = '';
+        $('#wageNewDouble').value = '';
+        renderSettings();
+        renderPreview();
+        toast(existing ? 'Satz für dieses Datum aktualisiert' : 'Neuer Satz hinzugefügt', 'success');
+    });
+
+    // Einen Lohnsatz löschen (außer dem ältesten — der deckt die alten Schichten ab).
+    $('#wageHistoryTable').addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('[data-del-wage]');
+        if (!btn || !isAdmin()) return;
+        const date = btn.getAttribute('data-del-wage');
+        const hist = wageHistory();
+        if (hist.length <= 1) return;
+        if (date === hist[0].gueltigAb) {
+            toast('Der älteste Satz kann nicht gelöscht werden — er deckt alle früheren Schichten ab.', 'error');
+            return;
+        }
+        if (!await confirmModal('Lohnsatz löschen?', `<p>Lohnsatz gültig ab ${escapeHtml(fmtDateDE(date))} wirklich löschen?</p>`)) return;
+        const idx = hist.findIndex(h => h.gueltigAb === date);
+        if (idx === -1) return;
+        hist.splice(idx, 1);
+        const latest = hist[hist.length - 1];
+        settings().wageSingle = latest.single;
+        settings().wageDouble = latest.double;
+        saveData();
+        renderSettings();
+        renderPreview();
+        toast('Lohnsatz gelöscht', 'success');
+    });
 
     // ---------- Tagessicherung per Mail ----------
 
@@ -2742,8 +2860,6 @@
 
     $('#settingsForm').addEventListener('submit', (ev) => {
         ev.preventDefault();
-        settings().wageSingle = Math.max(0, Number($('#setSingle').value) || 0);
-        settings().wageDouble = Math.max(0, Number($('#setDouble').value) || 0);
         const rv = Number($('#setRvAnteil').value);
         settings().rvAnteilProzent = (isFinite(rv) && rv >= 0 && rv <= 20) ? rv : 3.6;
         // Labels und Verantwortliche Stelle (für DSGVO + Listen / PDF) — werden

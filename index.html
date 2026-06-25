@@ -256,12 +256,6 @@
         <div class="card">
             <h2>Einstellungen</h2>
             <form id="settingsForm" class="grid">
-                <label>Stundenlohn einfach (EUR)
-                    <input type="number" step="0.01" min="0" id="setSingle" required>
-                </label>
-                <label>Stundenlohn Doppelüberwachung (EUR)
-                    <input type="number" step="0.01" min="0" id="setDouble" required>
-                </label>
                 <label>Eigentümer-Label 1 (für Räume mit Anteil „owner1")
                     <input type="text" id="setLabelOwner1" autocomplete="off"
                         placeholder="z.B. Firma X GmbH">
@@ -283,6 +277,34 @@
                 <div class="actions">
                     <button class="btn primary" type="submit">Speichern</button>
                     <button class="btn ghost" type="button" id="settingsShowDsgvo">Datenschutz-Hinweis ansehen</button>
+                </div>
+            </form>
+            <h3>Stundenlohn &amp; Lohnhistorie</h3>
+            <p class="muted small">
+                Stundensätze gelten <strong>ab einem Stichtag</strong>. Ein neuer Satz überschreibt den
+                bisherigen nicht, sondern wird als datierter Eintrag ergänzt. Jede Schicht wird mit dem
+                Satz berechnet, der an ihrem Datum galt — bereits erfasste Schichten behalten ihren
+                Verdienst, auch wenn du später einen neuen Satz einträgst.
+            </p>
+            <div class="table-wrap">
+                <table class="data" id="wageHistoryTable">
+                    <thead><tr><th>Gültig ab</th><th class="num">Einfach</th><th class="num">Doppel</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <form id="wageAddForm" class="grid">
+                <label>Gültig ab
+                    <input type="date" id="wageNewDate" required>
+                </label>
+                <label>Stundenlohn einfach (EUR)
+                    <input type="number" step="0.01" min="0" id="wageNewSingle" required>
+                </label>
+                <label>Stundenlohn Doppelüberwachung (EUR)
+                    <input type="number" step="0.01" min="0" id="wageNewDouble" required>
+                </label>
+                <div class="actions">
+                    <button class="btn primary" type="submit">Satz hinzufügen</button>
+                    <small class="hint">Gibt es für das Datum schon einen Satz, wird er ersetzt.</small>
                 </div>
             </form>
             <h3>Räume &amp; Aufteilung</h3>

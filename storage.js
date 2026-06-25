@@ -35,8 +35,18 @@
      * localStorage sind nicht betroffen — Object.assign in normalize()
      * lässt vorhandene Werte stehen. */
     const DEFAULT_SETTINGS = {
+        // wageSingle/wageDouble bleiben als "aktuellster Satz" erhalten (Spiegel
+        // des jüngsten Eintrags aus wageHistory), damit evtl. verbliebene
+        // Altzugriffe konsistent sind. Maßgeblich für die Berechnung ist aber
+        // die datierte Lohnhistorie unten (siehe wageHistory).
         wageSingle: 0,
         wageDouble: 0,
+        // Datierte Stundensätze. Jeder Eintrag { gueltigAb, single, double }
+        // gilt ab seinem Stichtag (inklusive) bis zum nächsten Eintrag. Eine
+        // Schicht wird mit dem Satz berechnet, der an ihrem Datum galt — ein
+        // neuer Satz verändert daher rückwirkend KEINE alten Schichten. Wird
+        // beim ersten Lauf aus wageSingle/wageDouble migriert (siehe normalize).
+        wageHistory: [],
         abgabenPercent: 31.17,
         // Arbeitnehmer-Anteil zur gesetzlichen Rentenversicherung in Prozent
         // vom Brutto. Stand 2026: 18,6 % minus 15 % AG-Pauschale = 3,6 %.
@@ -116,6 +126,18 @@
         return data;
     }
 
+    // Nicht-negative Zahl oder 0. Für Lohnsätze, die nie negativ sein dürfen.
+    function wageNum(v) {
+        const n = Number(v);
+        return isFinite(n) && n >= 0 ? n : 0;
+    }
+    // Lokales Tagesdatum als ISO YYYY-MM-DD (für gueltigAb-Fallback ohne Schichten).
+    function todayISODate() {
+        const d = new Date();
+        const tz = d.getTimezoneOffset() * 60000;
+        return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+    }
+
     // Stellt sicher dass alle Felder vorhanden sind, auch bei alten Datensätzen
     function normalize(data) {
         if (!data || typeof data !== 'object') return seed();
@@ -139,6 +161,50 @@
         if (typeof data.settings.rvAnteilProzent !== 'number' || isNaN(data.settings.rvAnteilProzent)) {
             data.settings.rvAnteilProzent = DEFAULT_SETTINGS.rvAnteilProzent;
         }
+        // Migration: Lohnhistorie. Früher galten die zentralen Sätze
+        // wageSingle/wageDouble rückwirkend für ALLE Schichten — eine
+        // Lohnerhöhung hätte die Verdienste alter Schichten verändert. Jetzt
+        // führen wir datierte Sätze. Beim ersten Lauf wandern die bisherigen
+        // Sätze als erster Eintrag in die Historie, gültig ab der ältesten
+        // vorhandenen Schicht, damit JEDE bestehende Schicht abgedeckt bleibt
+        // und ihren Verdienst exakt behält.
+        if (!Array.isArray(data.settings.wageHistory) || data.settings.wageHistory.length === 0) {
+            let oldest = '';
+            data.shifts.forEach(s => {
+                if (s && typeof s.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.date)) {
+                    if (!oldest || s.date < oldest) oldest = s.date;
+                }
+            });
+            data.settings.wageHistory = [{
+                gueltigAb: oldest || todayISODate(),
+                single: wageNum(data.settings.wageSingle),
+                double: wageNum(data.settings.wageDouble),
+            }];
+        }
+        // Bereinigen, defensiv parsen und chronologisch sortieren. Doppelte
+        // Stichtage werden zusammengeführt (späterer Eintrag im Array gewinnt),
+        // damit pro Datum genau ein Satz gilt.
+        const byDate = {};
+        data.settings.wageHistory.forEach(h => {
+            if (h && typeof h.gueltigAb === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(h.gueltigAb)) {
+                byDate[h.gueltigAb] = { gueltigAb: h.gueltigAb, single: wageNum(h.single), double: wageNum(h.double) };
+            }
+        });
+        data.settings.wageHistory = Object.values(byDate)
+            .sort((a, b) => a.gueltigAb.localeCompare(b.gueltigAb));
+        // Falls nach der Bereinigung nichts übrig blieb (kaputte Daten), aus den
+        // Alt-Feldern neu aufbauen, damit die Historie nie leer ist.
+        if (data.settings.wageHistory.length === 0) {
+            data.settings.wageHistory = [{
+                gueltigAb: todayISODate(),
+                single: wageNum(data.settings.wageSingle),
+                double: wageNum(data.settings.wageDouble),
+            }];
+        }
+        // wageSingle/wageDouble als Spiegel des jüngsten Eintrags pflegen.
+        const latestWage = data.settings.wageHistory[data.settings.wageHistory.length - 1];
+        data.settings.wageSingle = latestWage.single;
+        data.settings.wageDouble = latestWage.double;
         data.settings.dailyBackup = Object.assign(
             {}, DEFAULT_SETTINGS.dailyBackup, data.settings.dailyBackup || {});
         if (typeof data.settings.dailyBackup.enabled !== 'boolean') {

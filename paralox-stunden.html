@@ -1028,12 +1028,6 @@ tr.editing td {
         <div class="card">
             <h2>Einstellungen</h2>
             <form id="settingsForm" class="grid">
-                <label>Stundenlohn einfach (EUR)
-                    <input type="number" step="0.01" min="0" id="setSingle" required>
-                </label>
-                <label>Stundenlohn Doppelüberwachung (EUR)
-                    <input type="number" step="0.01" min="0" id="setDouble" required>
-                </label>
                 <label>Eigentümer-Label 1 (für Räume mit Anteil „owner1")
                     <input type="text" id="setLabelOwner1" autocomplete="off"
                         placeholder="z.B. Firma X GmbH">
@@ -1055,6 +1049,34 @@ tr.editing td {
                 <div class="actions">
                     <button class="btn primary" type="submit">Speichern</button>
                     <button class="btn ghost" type="button" id="settingsShowDsgvo">Datenschutz-Hinweis ansehen</button>
+                </div>
+            </form>
+            <h3>Stundenlohn &amp; Lohnhistorie</h3>
+            <p class="muted small">
+                Stundensätze gelten <strong>ab einem Stichtag</strong>. Ein neuer Satz überschreibt den
+                bisherigen nicht, sondern wird als datierter Eintrag ergänzt. Jede Schicht wird mit dem
+                Satz berechnet, der an ihrem Datum galt — bereits erfasste Schichten behalten ihren
+                Verdienst, auch wenn du später einen neuen Satz einträgst.
+            </p>
+            <div class="table-wrap">
+                <table class="data" id="wageHistoryTable">
+                    <thead><tr><th>Gültig ab</th><th class="num">Einfach</th><th class="num">Doppel</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <form id="wageAddForm" class="grid">
+                <label>Gültig ab
+                    <input type="date" id="wageNewDate" required>
+                </label>
+                <label>Stundenlohn einfach (EUR)
+                    <input type="number" step="0.01" min="0" id="wageNewSingle" required>
+                </label>
+                <label>Stundenlohn Doppelüberwachung (EUR)
+                    <input type="number" step="0.01" min="0" id="wageNewDouble" required>
+                </label>
+                <div class="actions">
+                    <button class="btn primary" type="submit">Satz hinzufügen</button>
+                    <small class="hint">Gibt es für das Datum schon einen Satz, wird er ersetzt.</small>
                 </div>
             </form>
             <h3>Räume &amp; Aufteilung</h3>
@@ -1383,8 +1405,18 @@ window.ParaloxConfig = {
      * localStorage sind nicht betroffen — Object.assign in normalize()
      * lässt vorhandene Werte stehen. */
     const DEFAULT_SETTINGS = {
+        // wageSingle/wageDouble bleiben als "aktuellster Satz" erhalten (Spiegel
+        // des jüngsten Eintrags aus wageHistory), damit evtl. verbliebene
+        // Altzugriffe konsistent sind. Maßgeblich für die Berechnung ist aber
+        // die datierte Lohnhistorie unten (siehe wageHistory).
         wageSingle: 0,
         wageDouble: 0,
+        // Datierte Stundensätze. Jeder Eintrag { gueltigAb, single, double }
+        // gilt ab seinem Stichtag (inklusive) bis zum nächsten Eintrag. Eine
+        // Schicht wird mit dem Satz berechnet, der an ihrem Datum galt — ein
+        // neuer Satz verändert daher rückwirkend KEINE alten Schichten. Wird
+        // beim ersten Lauf aus wageSingle/wageDouble migriert (siehe normalize).
+        wageHistory: [],
         abgabenPercent: 31.17,
         // Arbeitnehmer-Anteil zur gesetzlichen Rentenversicherung in Prozent
         // vom Brutto. Stand 2026: 18,6 % minus 15 % AG-Pauschale = 3,6 %.
@@ -1464,6 +1496,18 @@ window.ParaloxConfig = {
         return data;
     }
 
+    // Nicht-negative Zahl oder 0. Für Lohnsätze, die nie negativ sein dürfen.
+    function wageNum(v) {
+        const n = Number(v);
+        return isFinite(n) && n >= 0 ? n : 0;
+    }
+    // Lokales Tagesdatum als ISO YYYY-MM-DD (für gueltigAb-Fallback ohne Schichten).
+    function todayISODate() {
+        const d = new Date();
+        const tz = d.getTimezoneOffset() * 60000;
+        return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+    }
+
     // Stellt sicher dass alle Felder vorhanden sind, auch bei alten Datensätzen
     function normalize(data) {
         if (!data || typeof data !== 'object') return seed();
@@ -1487,6 +1531,50 @@ window.ParaloxConfig = {
         if (typeof data.settings.rvAnteilProzent !== 'number' || isNaN(data.settings.rvAnteilProzent)) {
             data.settings.rvAnteilProzent = DEFAULT_SETTINGS.rvAnteilProzent;
         }
+        // Migration: Lohnhistorie. Früher galten die zentralen Sätze
+        // wageSingle/wageDouble rückwirkend für ALLE Schichten — eine
+        // Lohnerhöhung hätte die Verdienste alter Schichten verändert. Jetzt
+        // führen wir datierte Sätze. Beim ersten Lauf wandern die bisherigen
+        // Sätze als erster Eintrag in die Historie, gültig ab der ältesten
+        // vorhandenen Schicht, damit JEDE bestehende Schicht abgedeckt bleibt
+        // und ihren Verdienst exakt behält.
+        if (!Array.isArray(data.settings.wageHistory) || data.settings.wageHistory.length === 0) {
+            let oldest = '';
+            data.shifts.forEach(s => {
+                if (s && typeof s.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.date)) {
+                    if (!oldest || s.date < oldest) oldest = s.date;
+                }
+            });
+            data.settings.wageHistory = [{
+                gueltigAb: oldest || todayISODate(),
+                single: wageNum(data.settings.wageSingle),
+                double: wageNum(data.settings.wageDouble),
+            }];
+        }
+        // Bereinigen, defensiv parsen und chronologisch sortieren. Doppelte
+        // Stichtage werden zusammengeführt (späterer Eintrag im Array gewinnt),
+        // damit pro Datum genau ein Satz gilt.
+        const byDate = {};
+        data.settings.wageHistory.forEach(h => {
+            if (h && typeof h.gueltigAb === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(h.gueltigAb)) {
+                byDate[h.gueltigAb] = { gueltigAb: h.gueltigAb, single: wageNum(h.single), double: wageNum(h.double) };
+            }
+        });
+        data.settings.wageHistory = Object.values(byDate)
+            .sort((a, b) => a.gueltigAb.localeCompare(b.gueltigAb));
+        // Falls nach der Bereinigung nichts übrig blieb (kaputte Daten), aus den
+        // Alt-Feldern neu aufbauen, damit die Historie nie leer ist.
+        if (data.settings.wageHistory.length === 0) {
+            data.settings.wageHistory = [{
+                gueltigAb: todayISODate(),
+                single: wageNum(data.settings.wageSingle),
+                double: wageNum(data.settings.wageDouble),
+            }];
+        }
+        // wageSingle/wageDouble als Spiegel des jüngsten Eintrags pflegen.
+        const latestWage = data.settings.wageHistory[data.settings.wageHistory.length - 1];
+        data.settings.wageSingle = latestWage.single;
+        data.settings.wageDouble = latestWage.double;
         data.settings.dailyBackup = Object.assign(
             {}, DEFAULT_SETTINGS.dailyBackup, data.settings.dailyBackup || {});
         if (typeof data.settings.dailyBackup.enabled !== 'boolean') {
@@ -1952,9 +2040,31 @@ window.ParaloxConfig = {
 
     // ---------- Berechnung ----------
 
+    // Datierte Lohnhistorie (chronologisch sortiert, von normalize() garantiert
+    // nicht leer). Quelle der Wahrheit für alle Verdienstberechnungen.
+    function wageHistory() {
+        const h = settings().wageHistory;
+        return Array.isArray(h) ? h : [];
+    }
+    // Die Stundensätze, die an einem bestimmten Datum (YYYY-MM-DD) galten.
+    // Liefert den jüngsten Eintrag mit gueltigAb <= date. Für Daten vor dem
+    // ersten Eintrag fällt es auf den frühesten Satz zurück, damit nie ein
+    // Verdienst von 0 entsteht (Sicherheitsnetz, falls der Migrationseintrag
+    // mal gelöscht würde).
+    function wageRatesFor(date) {
+        const hist = wageHistory();
+        if (hist.length === 0) return { single: 0, double: 0 };
+        let chosen = hist[0];
+        for (const h of hist) {
+            if (h.gueltigAb <= date) chosen = h;
+            else break;
+        }
+        return { single: chosen.single, double: chosen.double };
+    }
+
     function wageFor(shift) {
-        const s = settings();
-        const rate = shift.isDouble ? s.wageDouble : s.wageSingle;
+        const rates = wageRatesFor(shift.date);
+        const rate = shift.isDouble ? rates.double : rates.single;
         const mins = minutesOf(shift.startTime, shift.endTime);
         return { minutes: mins, rate, amount: (mins / 60) * rate };
     }
@@ -2156,7 +2266,9 @@ window.ParaloxConfig = {
         const isD = $('#sfDouble').checked;
         if (!start || !end) { $('#sfPreview').textContent = ''; return; }
         const mins = minutesOf(start, end);
-        const rate = isD ? settings().wageDouble : settings().wageSingle;
+        // Satz, der am gewählten Schicht-Datum gilt (nicht der aktuellste).
+        const rates = wageRatesFor($('#sfDate').value || todayISO());
+        const rate = isD ? rates.double : rates.single;
         const amount = (mins / 60) * rate;
         $('#sfPreview').textContent = `${fmtHours(mins)} Std · ${fmtEUR(rate)} /h · ${fmtEUR(amount)}`;
     }
@@ -2552,7 +2664,9 @@ window.ParaloxConfig = {
 
     // ---------- Shift Form ----------
 
-    ['sfStart','sfEnd','sfDouble'].forEach(id => {
+    // sfDate ist mit dabei, weil der gültige Stundensatz jetzt vom Schicht-Datum
+    // abhängt (Lohnhistorie) — die Vorschau muss bei Datumswechsel neu rechnen.
+    ['sfStart','sfEnd','sfDouble','sfDate'].forEach(id => {
         $('#' + id).addEventListener('change', renderPreview);
         $('#' + id).addEventListener('input', renderPreview);
     });
@@ -4076,8 +4190,6 @@ window.ParaloxConfig = {
     // ---------- Einstellungen ----------
 
     function renderSettings() {
-        $('#setSingle').value = settings().wageSingle;
-        $('#setDouble').value = settings().wageDouble;
         $('#setRvAnteil').value = settings().rvAnteilProzent;
         const labels = settings().labels || {};
         $('#setLabelOwner1').value = labels.owner1 || '';
@@ -4098,8 +4210,10 @@ window.ParaloxConfig = {
         renderBackupStatus();
         const admin = isAdmin();
         $$('#settingsForm input, #settingsForm button').forEach(el => el.disabled = !admin);
+        $$('#wageAddForm input, #wageAddForm button').forEach(el => el.disabled = !admin);
         $$('#backupPasswordForm input, #backupPasswordForm button').forEach(el => el.disabled = !admin);
         $('#settingsForm').title = admin ? '' : 'Nur Admins können Einstellungen ändern.';
+        renderWageHistory();
         const tbody = $('#roomsTable tbody');
         tbody.innerHTML = '';
         Object.entries(settings().rooms).forEach(([code, r]) => {
@@ -4113,6 +4227,98 @@ window.ParaloxConfig = {
             tbody.appendChild(tr);
         });
     }
+
+    // Lohnhistorie-Tabelle rendern. Neueste zuerst, damit der aktuell gültige
+    // Satz oben steht. Pro Zeile ein Löschen-Button (nur Admin) — der älteste
+    // Eintrag bleibt geschützt, weil er die Untergrenze für alte Schichten ist.
+    function renderWageHistory() {
+        const tbody = $('#wageHistoryTable tbody');
+        if (!tbody) return;
+        const hist = wageHistory();
+        const admin = isAdmin();
+        tbody.innerHTML = '';
+        // Kopie absteigend sortieren, ohne das Original anzufassen.
+        const rows = hist.slice().sort((a, b) => b.gueltigAb.localeCompare(a.gueltigAb));
+        rows.forEach((h) => {
+            const isOldest = hist.length > 1 && h.gueltigAb === hist[0].gueltigAb;
+            const tr = document.createElement('tr');
+            const delCell = (admin && !isOldest)
+                ? `<button class="btn small danger" data-del-wage="${escapeHtml(h.gueltigAb)}">Löschen</button>`
+                : (isOldest ? '<span class="muted small">Basis</span>' : '');
+            tr.innerHTML = `
+                <td>${escapeHtml(fmtDateDE(h.gueltigAb))}</td>
+                <td class="num">${fmtEUR(h.single)}</td>
+                <td class="num">${fmtEUR(h.double)}</td>
+                <td>${delCell}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        // Datum-Feld auf heute vorbelegen, Beträge mit dem aktuell gültigen Satz.
+        if (!$('#wageNewDate').value) $('#wageNewDate').value = todayISO();
+        const latest = hist[hist.length - 1] || { single: 0, double: 0 };
+        if (!$('#wageNewSingle').value) $('#wageNewSingle').value = latest.single;
+        if (!$('#wageNewDouble').value) $('#wageNewDouble').value = latest.double;
+    }
+
+    // Neuen datierten Satz hinzufügen (oder einen bestehenden mit gleichem
+    // Stichtag ersetzen). Verändert keine alten Schichten — die rechnen weiter
+    // mit dem Satz, der an ihrem Datum gilt.
+    $('#wageAddForm').addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        if (!isAdmin()) return;
+        const date = $('#wageNewDate').value;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            toast('Bitte ein gültiges Stichtag-Datum wählen.', 'error');
+            return;
+        }
+        const single = Math.max(0, Number($('#wageNewSingle').value) || 0);
+        const double = Math.max(0, Number($('#wageNewDouble').value) || 0);
+        const hist = wageHistory();
+        const existing = hist.find(h => h.gueltigAb === date);
+        if (existing) {
+            existing.single = single;
+            existing.double = double;
+        } else {
+            hist.push({ gueltigAb: date, single, double });
+        }
+        hist.sort((a, b) => a.gueltigAb.localeCompare(b.gueltigAb));
+        // Spiegel-Felder auf den jüngsten Satz nachziehen.
+        const latest = hist[hist.length - 1];
+        settings().wageSingle = latest.single;
+        settings().wageDouble = latest.double;
+        saveData();
+        // Eingabefelder zurücksetzen, damit renderWageHistory sie neu vorbelegt.
+        $('#wageNewDate').value = '';
+        $('#wageNewSingle').value = '';
+        $('#wageNewDouble').value = '';
+        renderSettings();
+        renderPreview();
+        toast(existing ? 'Satz für dieses Datum aktualisiert' : 'Neuer Satz hinzugefügt', 'success');
+    });
+
+    // Einen Lohnsatz löschen (außer dem ältesten — der deckt die alten Schichten ab).
+    $('#wageHistoryTable').addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('[data-del-wage]');
+        if (!btn || !isAdmin()) return;
+        const date = btn.getAttribute('data-del-wage');
+        const hist = wageHistory();
+        if (hist.length <= 1) return;
+        if (date === hist[0].gueltigAb) {
+            toast('Der älteste Satz kann nicht gelöscht werden — er deckt alle früheren Schichten ab.', 'error');
+            return;
+        }
+        if (!await confirmModal('Lohnsatz löschen?', `<p>Lohnsatz gültig ab ${escapeHtml(fmtDateDE(date))} wirklich löschen?</p>`)) return;
+        const idx = hist.findIndex(h => h.gueltigAb === date);
+        if (idx === -1) return;
+        hist.splice(idx, 1);
+        const latest = hist[hist.length - 1];
+        settings().wageSingle = latest.single;
+        settings().wageDouble = latest.double;
+        saveData();
+        renderSettings();
+        renderPreview();
+        toast('Lohnsatz gelöscht', 'success');
+    });
 
     // ---------- Tagessicherung per Mail ----------
 
@@ -4393,8 +4599,6 @@ window.ParaloxConfig = {
 
     $('#settingsForm').addEventListener('submit', (ev) => {
         ev.preventDefault();
-        settings().wageSingle = Math.max(0, Number($('#setSingle').value) || 0);
-        settings().wageDouble = Math.max(0, Number($('#setDouble').value) || 0);
         const rv = Number($('#setRvAnteil').value);
         settings().rvAnteilProzent = (isFinite(rv) && rv >= 0 && rv <= 20) ? rv : 3.6;
         // Labels und Verantwortliche Stelle (für DSGVO + Listen / PDF) — werden
