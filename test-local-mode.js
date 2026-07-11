@@ -10,7 +10,11 @@
 const { chromium } = require('playwright-core');
 
 const APP_URL = process.env.PARALOX_URL || 'http://127.0.0.1:8080/paralox-stunden.html';
-const CHROME = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
+// Chrome-Pfad je nach Installation (64-bit oder x86); mit PARALOX_CHROME überschreibbar.
+const CHROME = process.env.PARALOX_CHROME || [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+].find(p => require('fs').existsSync(p));
 
 let fails = 0;
 function check(label, cond, detail) {
@@ -101,14 +105,14 @@ function check(label, cond, detail) {
         !document.getElementById('view-login').classList.contains('hidden'));
     check('Login-Formular sichtbar', loginVisible);
 
-    // Wir kennen die User aus test-server.js: Owner1/Owner2 mit PIN 1234
+    // Login gegen den Seed-Admin. Er heißt generisch "Admin", weil echte Namen
+    // nicht im öffentlichen Repo stehen dürfen (siehe DEFAULT_STATE in storage.js).
     const loginResult = await page.evaluate(async () => {
         const sel = document.getElementById('loginName');
         const pin = document.getElementById('loginPassword');
         if (!sel || !pin) return { ok: false, reason: 'Form-Elemente fehlen' };
-        // Owner1 wählen
-        const owner1Opt = Array.from(sel.options).find(o => o.textContent === 'Owner1');
-        if (!owner1Opt) return { ok: false, reason: 'Owner1 nicht im Select', options: Array.from(sel.options).map(o => o.textContent) };
+        const owner1Opt = Array.from(sel.options).find(o => o.textContent === 'Admin');
+        if (!owner1Opt) return { ok: false, reason: 'Admin nicht im Select', options: Array.from(sel.options).map(o => o.textContent) };
         sel.value = owner1Opt.value;
         pin.value = 'paralox';
         document.getElementById('loginForm').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
@@ -121,7 +125,7 @@ function check(label, cond, detail) {
     });
     check('Login erfolgreich (Login-View ausgeblendet)',
         loginResult.ok, JSON.stringify(loginResult));
-    check('Eingeloggt als Owner1', /Owner1/.test(loginResult.userName || ''),
+    check('Eingeloggt als Admin', /Admin/.test(loginResult.userName || ''),
         loginResult.userName);
 
     console.log('7) Daten in localStorage');

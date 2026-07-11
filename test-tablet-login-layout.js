@@ -5,7 +5,11 @@
 const { chromium } = require('playwright-core');
 
 const APP_URL = process.env.PARALOX_URL || 'http://127.0.0.1:8080/paralox-stunden.html';
-const CHROME = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
+// Chrome-Pfad je nach Installation (64-bit oder x86); mit PARALOX_CHROME überschreibbar.
+const CHROME = process.env.PARALOX_CHROME || [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+].find(p => require('fs').existsSync(p));
 
 let fails = 0;
 function check(label, cond, detail) {

@@ -14,7 +14,11 @@
 const { chromium } = require('playwright-core');
 
 const APP_URL = process.env.PARALOX_URL || 'http://127.0.0.1:8080/paralox-stunden.html';
-const CHROME = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
+// Chrome-Pfad je nach Installation (64-bit oder x86); mit PARALOX_CHROME überschreibbar.
+const CHROME = process.env.PARALOX_CHROME || [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+].find(p => require('fs').existsSync(p));
 const RECIPIENT = 'backup@example.com';
 
 let fails = 0;
@@ -29,6 +33,10 @@ async function setupShareMock(page, behavior = 'success') {
     // (z.B. doLogout) überlebt. addInitScript läuft bei jedem Page-Load
     // wieder — aber localStorage bleibt.
     await page.addInitScript((b) => {
+        // Ohne hinterlegtes Backup-Passwort bricht runDailyBackup ab, bevor es
+        // überhaupt zum Share kommt (verschlüsselte .enc-Backups sind Pflicht).
+        // Wie in test-monthly-archive.js gesetzt.
+        localStorage.setItem('paraloxStunden.backupPassword', 'TestPasswort12345');
         const KEY = '__test_shareCalls';
         const load = () => {
             try { return JSON.parse(localStorage.getItem(KEY) || '[]'); }
@@ -42,7 +50,16 @@ async function setupShareMock(page, behavior = 'success') {
         navigator.share = async (data) => {
             let fileText = null;
             if (data.files && data.files[0]) {
-                try { fileText = await data.files[0].text(); } catch {}
+                // Backups sind AES-GCM-verschlüsselt (.enc). Für die Inhaltsprüfung
+                // hier mit dem Testpasswort entschlüsseln; nur falls das scheitert,
+                // den Rohtext nehmen, damit der Check aussagekräftig fehlschlägt.
+                try {
+                    const pw = localStorage.getItem('paraloxStunden.backupPassword');
+                    const plain = await window.ParaloxCrypto.decryptBlob(data.files[0], pw);
+                    fileText = new TextDecoder().decode(plain);
+                } catch {
+                    try { fileText = await data.files[0].text(); } catch {}
+                }
             }
             const arr = load();
             arr.push({
@@ -90,10 +107,11 @@ async function newPage(behavior = 'success', primeRecipient = RECIPIENT) {
     return { browser, page };
 }
 
+// Der Seed-Admin heißt generisch "Admin" — echte Namen stehen nicht im Repo.
 async function loginAsOwner1(page) {
     await page.evaluate(() => {
         const sel = document.getElementById('loginName');
-        const opt = Array.from(sel.options).find(o => o.textContent === 'Owner1');
+        const opt = Array.from(sel.options).find(o => o.textContent === 'Admin');
         sel.value = opt.value;
         document.getElementById('loginPassword').value = 'paralox';
         document.getElementById('loginForm').dispatchEvent(
@@ -141,10 +159,13 @@ async function saveShift(page, date, start, end) {
         if (calls.length) {
             const c = calls[0];
             const today = new Date().toISOString().slice(0, 10);
-            check('Share-Datei hat .json-Endung', /\.json$/.test(c.name || ''), c.name);
+            // Anhänge sind verschlüsselt: .json.enc, application/octet-stream.
+            // Mitarbeiter sehen im Share-Dialog nur unleserliche Krypto-Dateien.
+            check('Share-Datei hat .json.enc-Endung', /\.json\.enc$/.test(c.name || ''), c.name);
             check('Dateiname enthält heutiges Datum',
                 (c.name || '').includes(today), c.name);
-            check('MIME-Type application/json', c.type === 'application/json', c.type);
+            check('MIME-Type application/octet-stream',
+                c.type === 'application/octet-stream', c.type);
             check('Share-Text enthält Empfänger',
                 /backup@example\.com/.test(c.text || ''), c.text);
         }
@@ -203,8 +224,14 @@ async function saveShift(page, date, start, end) {
             const j = JSON.parse(fileText);
             check('JSON hat type=paralox-stunden-backup',
                 j.type === 'paralox-stunden-backup', j.type);
-            check('JSON hat data.employees (>= 2)',
-                Array.isArray(j.data?.employees) && j.data.employees.length >= 2);
+            // Der Seed enthält genau einen generischen Admin (keine echten Namen im
+            // Repo). Statt nur die Anzahl zu zählen wird geprüft, dass der Mitarbeiter
+            // namentlich im Backup steht — sonst wäre ein leerer Roster unbemerkt ok.
+            check('JSON hat data.employees mit dem Seed-Admin',
+                Array.isArray(j.data?.employees)
+                && j.data.employees.length >= 1
+                && j.data.employees.some(e => e.name === 'Admin'),
+                JSON.stringify(j.data?.employees?.map(e => e.name)));
             check('JSON hat data.settings', !!j.data?.settings);
             check('JSON enthält pre-populated Schicht',
                 Array.isArray(j.data?.shifts) && j.data.shifts.length >= 1);
