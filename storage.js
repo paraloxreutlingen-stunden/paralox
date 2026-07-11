@@ -95,6 +95,7 @@
                 isAccountant: false,
                 isActive: true,
                 rvBefreit: false,
+                rvHistorie: [],
                 assignedTo: 'owner1',
                 monatspauschale: 0,
                 pauschaleAb: '',
@@ -136,6 +137,10 @@
         const d = new Date();
         const tz = d.getTimezoneOffset() * 60000;
         return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+    }
+    // Lokaler Monat als YYYY-MM (Fallback-Stichtag der RV-Historie, siehe unten).
+    function todayISOMonth() {
+        return todayISODate().slice(0, 7);
     }
 
     // Stellt sicher dass alle Felder vorhanden sind, auch bei alten Datensätzen
@@ -224,6 +229,16 @@
         data.pinboard  = Object.assign({ text: '', updatedAt: null, updatedBy: null }, data.pinboard || {});
         if (typeof data.adminNotes !== 'string') data.adminNotes = '';
         data.updatedAt = data.updatedAt || new Date().toISOString();
+        // Ältester Schicht-Monat je Mitarbeiter — Ankerpunkt für die Migration der
+        // RV-Historie (siehe unten), damit der erste Eintrag jede bestehende
+        // Schicht abdeckt.
+        const oldestMonthByEmp = {};
+        data.shifts.forEach(s => {
+            if (!s || typeof s.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s.date)) return;
+            const m = s.date.slice(0, 7);
+            const cur = oldestMonthByEmp[s.employeeId];
+            if (!cur || m < cur) oldestMonthByEmp[s.employeeId] = m;
+        });
         // Sicherstellen dass jeder Mitarbeiter ein assignedTo hat
         data.employees.forEach(e => {
             if (e.assignedTo !== 'owner1' && e.assignedTo !== 'owner2') {
@@ -233,6 +248,44 @@
             // Migration: bestehende Mitarbeiter sind standardmäßig RV-pflichtig
             // (rvBefreit=false). Befreiung muss aktiv per Häkchen gesetzt werden.
             if (typeof e.rvBefreit !== 'boolean') e.rvBefreit = false;
+            // Migration: datierte RV-Historie. Früher galt der Boolean rvBefreit
+            // rückwirkend für ALLE Monate — ein Statuswechsel hätte die
+            // Abrechnung vergangener Monate nachträglich verändert. Jetzt gilt
+            // jeder Eintrag { gueltigAb, befreit } ab seinem Stichtag (inklusive)
+            // bis zum nächsten Eintrag. Beim ersten Lauf wandert der bisherige
+            // Status als einziger Eintrag in die Historie, gültig ab dem ältesten
+            // Schicht-Monat des Mitarbeiters. Dadurch bleibt sein Status in JEDEM
+            // bestehenden Monat exakt derselbe wie vorher — die Migration ändert
+            // keine einzige Abrechnung.
+            if (!Array.isArray(e.rvHistorie) || e.rvHistorie.length === 0) {
+                e.rvHistorie = [{
+                    gueltigAb: oldestMonthByEmp[e.id] || todayISOMonth(),
+                    befreit: e.rvBefreit,
+                }];
+            }
+            // Bereinigen, defensiv parsen und chronologisch sortieren. Doppelte
+            // Stichtage werden zusammengeführt (späterer Eintrag im Array gewinnt),
+            // damit pro Monat genau ein Status gilt.
+            const rvByMonth = {};
+            e.rvHistorie.forEach(h => {
+                if (h && typeof h.gueltigAb === 'string' && /^\d{4}-\d{2}$/.test(h.gueltigAb)) {
+                    rvByMonth[h.gueltigAb] = { gueltigAb: h.gueltigAb, befreit: !!h.befreit };
+                }
+            });
+            e.rvHistorie = Object.values(rvByMonth)
+                .sort((a, b) => a.gueltigAb.localeCompare(b.gueltigAb));
+            // Falls nach der Bereinigung nichts übrig blieb (kaputte Daten), aus
+            // dem Alt-Feld neu aufbauen, damit die Historie nie leer ist.
+            if (e.rvHistorie.length === 0) {
+                e.rvHistorie = [{
+                    gueltigAb: oldestMonthByEmp[e.id] || todayISOMonth(),
+                    befreit: e.rvBefreit,
+                }];
+            }
+            // rvBefreit als Spiegel des jüngsten Eintrags pflegen — analog zu
+            // wageSingle/wageDouble. Reine Anzeige ("aktueller Status"); für jede
+            // Berechnung ist die Historie maßgeblich.
+            e.rvBefreit = e.rvHistorie[e.rvHistorie.length - 1].befreit;
             // Migration: Monatspauschale (EUR/Monat) — zusätzlicher fester Lohn-
             // Bestandteil neben den Schichten. Default 0 bedeutet "keine Pauschale".
             if (typeof e.monatspauschale !== 'number' || !isFinite(e.monatspauschale) || e.monatspauschale < 0) {

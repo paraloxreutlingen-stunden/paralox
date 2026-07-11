@@ -150,9 +150,17 @@
         return new Promise(resolve => {
             const modal = $('#modal');
             $('#modalTitle').textContent = title;
-            const html = fields.map((f, i) =>
-                `<label>${f.label}<input type="${f.type || 'text'}" id="pm_${i}" value="${f.value ?? ''}" ${f.attr || ''}></label>`
-            ).join('');
+            // Felder mit options[] werden zum <select> — .value liest sich gleich,
+            // daher bleibt die Auswertung unten unverändert.
+            const html = fields.map((f, i) => {
+                if (Array.isArray(f.options)) {
+                    const opts = f.options.map(o =>
+                        `<option value="${o.value}" ${String(o.value) === String(f.value) ? 'selected' : ''}>${o.label}</option>`
+                    ).join('');
+                    return `<label>${f.label}<select id="pm_${i}">${opts}</select></label>`;
+                }
+                return `<label>${f.label}<input type="${f.type || 'text'}" id="pm_${i}" value="${f.value ?? ''}" ${f.attr || ''}></label>`;
+            }).join('');
             $('#modalBody').innerHTML = html;
             modal.classList.remove('hidden');
             setTimeout(() => $('#pm_0')?.focus(), 50);
@@ -1395,9 +1403,53 @@
         const e = employees().find(x => x.id === id);
         return (e && e.assignedTo) || 'owner1';
     }
+    /* AKTUELLER RV-Status eines Mitarbeiters (Spiegel des jüngsten Historien-
+     * Eintrags). Nur für die Anzeige gedacht — Badge in der Mitarbeiterliste,
+     * Vorbelegung von Dialogen. Für JEDE Berechnung ist rvBefreitForMonth zu
+     * verwenden, sonst wirkt ein Statuswechsel wieder rückwirkend. */
     function empRvBefreit(id) {
         const e = employees().find(x => x.id === id);
         return !!(e && e.rvBefreit);
+    }
+
+    /* Datierte RV-Historie eines Mitarbeiters (chronologisch sortiert, von
+     * normalize() garantiert nicht leer). Quelle der Wahrheit für den RV-Status. */
+    function rvHistorieFor(empId) {
+        const e = employees().find(x => x.id === empId);
+        return Array.isArray(e?.rvHistorie) ? e.rvHistorie : [];
+    }
+
+    /* RV-Status, der in einem bestimmten MONAT (YYYY-MM) galt. Liefert den
+     * jüngsten Eintrag mit gueltigAb <= month; ein Eintrag gilt also ab seinem
+     * Stichtag (inklusive) bis zum nächsten Eintrag (exklusive) — dieselbe
+     * Konvention wie bei wageRatesFor. Für Monate vor dem ersten Eintrag fällt
+     * es auf den frühesten Status zurück (Sicherheitsnetz, falls der
+     * Migrationseintrag mal gelöscht würde). Monatsgenau, weil die RV in
+     * Beitragsmonaten rechnet — auch die 175-EUR-Schwelle ist eine Monatsgrenze. */
+    function rvBefreitForMonth(empId, month) {
+        const hist = rvHistorieFor(empId);
+        if (hist.length === 0) return empRvBefreit(empId);
+        let chosen = hist[0];
+        for (const h of hist) {
+            if (h.gueltigAb <= month) chosen = h;
+            else break;
+        }
+        return !!chosen.befreit;
+    }
+
+    /* Trägt einen RV-Statuswechsel in die Historie eines Mitarbeiters ein:
+     * dedupliziert nach Stichtag (neuer Eintrag gewinnt), sortiert chronologisch
+     * und spiegelt rvBefreit auf den jüngsten Eintrag. Muss hier passieren, weil
+     * save() im Gegensatz zu load() NICHT normalisiert — sonst bliebe die Historie
+     * bis zum nächsten Laden unsortiert und das Badge zeigte den alten Status. */
+    function setRvEintrag(emp, gueltigAb, befreit) {
+        const hist = Array.isArray(emp.rvHistorie) ? emp.rvHistorie : [];
+        const merged = [
+            ...hist.filter(h => h.gueltigAb !== gueltigAb),
+            { gueltigAb, befreit: !!befreit },
+        ].sort((a, b) => a.gueltigAb.localeCompare(b.gueltigAb));
+        emp.rvHistorie = merged;
+        emp.rvBefreit = merged[merged.length - 1].befreit;
     }
 
     /* Minijob-RV-Konstanten (Stand Minijob-Zentrale 2026, gewerbliche Anstellung).
@@ -1448,8 +1500,13 @@
      * nur in Monaten ab dem Stichtag (pauschaleAb) zum Brutto addiert (so wirkt
      * sie auch auf die 175-EUR-Schwelle und Pauschalabgaben). monthCount zählt
      * die Monate, in denen die Pauschale tatsächlich griff; pauschaleTotal ist
-     * die effektiv addierte Summe (für Anzeige). */
-    function payoutInfoForShifts(shiftList, rvBefreit, empId) {
+     * die effektiv addierte Summe (für Anzeige).
+     * Der RV-Status wird PRO MONAT aus der Historie gelesen (rvBefreitForMonth),
+     * nicht einmal pauschal für den ganzen Zeitraum — über einen Statuswechsel
+     * hinweg können in derselben Auswertung befreite und pflichtige Monate
+     * liegen. befreitMonths listet die befreiten YYYY-MM; alleBefreit/
+     * teilweiseBefreit sind daraus abgeleitete Flags für ehrliche Labels. */
+    function payoutInfoForShifts(shiftList, empId) {
         const byMonth = new Map();
         shiftList.forEach(s => {
             const month = (s.date || '').slice(0, 7);
@@ -1459,16 +1516,20 @@
         let brutto = 0, rvAnteil = 0, auszahlung = 0;
         let pauschaleTotal = 0, pauschaleMonths = 0;
         const mindestMonths = [];
+        const befreitMonths = [];
         [...byMonth.entries()].forEach(([month, schichtBrutto]) => {
+            const befreit = rvBefreitForMonth(empId, month);
+            if (befreit) befreitMonths.push(month);
             const pauschale = monatspauschaleForMonth(empId, month);
             const monatsBrutto = schichtBrutto + pauschale;
             if (pauschale > 0) { pauschaleTotal += pauschale; pauschaleMonths += 1; }
-            const p = payoutInfo(monatsBrutto, rvBefreit);
+            const p = payoutInfo(monatsBrutto, befreit);
             brutto += p.brutto;
             rvAnteil += p.rvAnteil;
             auszahlung += p.auszahlung;
             if (p.mindestGreift) mindestMonths.push(month);
         });
+        const monatsZahl = byMonth.size;
         return {
             brutto: roundHalfUp(brutto),
             rvAnteil: roundHalfUp(rvAnteil),
@@ -1476,6 +1537,9 @@
             mindestMonths: mindestMonths.sort(),
             monthCount: pauschaleMonths,
             pauschaleTotal: roundHalfUp(pauschaleTotal),
+            befreitMonths: befreitMonths.sort(),
+            alleBefreit: monatsZahl > 0 && befreitMonths.length === monatsZahl,
+            teilweiseBefreit: befreitMonths.length > 0 && befreitMonths.length < monatsZahl,
         };
     }
 
@@ -1522,7 +1586,6 @@
             byEmp.get(s.employeeId).push(s);
         });
         byEmp.forEach((empShifts, empId) => {
-            const befreit = empRvBefreit(empId);
             const byMonth = new Map();
             empShifts.forEach(s => {
                 const month = (s.date || '').slice(0, 7);
@@ -1530,6 +1593,10 @@
                 byMonth.get(month).push(s);
             });
             byMonth.forEach((monthShifts, month) => {
+                // RV-Status gilt PRO MONAT — der Lookup muss innerhalb dieser
+                // Schleife stehen, sonst würde ein Statuswechsel auf alle Monate
+                // des Zeitraums durchschlagen.
+                const befreit = rvBefreitForMonth(empId, month);
                 // Pauschale dieses Monats — 0, wenn der Monat vor dem Stichtag liegt.
                 const pauschale = monatspauschaleForMonth(empId, month);
                 const bruttoPerShift = monthShifts.map(s => wageFor(s).amount);
@@ -1661,24 +1728,36 @@
         let mindestNoteHtml = '';
         if (filteredEmpId && list.length) {
             const empId = Number(filteredEmpId);
-            const befreit = empRvBefreit(empId);
-            const p = payoutInfoForShifts(list, befreit, empId);
+            const p = payoutInfoForShifts(list, empId);
             const pctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
-            const rvLabel = befreit
+            // Über einen Statuswechsel hinweg kann der Zeitraum befreite UND
+            // pflichtige Monate enthalten — dann wäre "(befreit)" gelogen. Das
+            // Label sagt daher genau, was gilt, und der Betrag wird ausgewiesen.
+            const rvLabel = p.alleBefreit
                 ? `RV-Anteil (befreit)`
-                : p.mindestMonths.length
-                    ? `RV-Anteil (Mindestbeitrag*)`
-                    : `RV-Anteil (${pctStr}%)`;
+                : p.teilweiseBefreit
+                    ? `RV-Anteil (teilw. befreit†)`
+                    : p.mindestMonths.length
+                        ? `RV-Anteil (Mindestbeitrag*)`
+                        : `RV-Anteil (${pctStr}%)`;
             summaryHtmlOut +=
                 `<div class="stat"><div class="label">Brutto ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.brutto)}</div></div>` +
-                `<div class="stat"><div class="label">${rvLabel}</div><div class="value">${befreit ? '–' : '− ' + fmtEUR(p.rvAnteil)}</div></div>` +
+                `<div class="stat"><div class="label">${rvLabel}</div><div class="value">${p.alleBefreit ? '–' : '− ' + fmtEUR(p.rvAnteil)}</div></div>` +
                 `<div class="stat"><div class="label">Auszahlung an ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.auszahlung)}</div></div>`;
             if (p.pauschaleTotal > 0) {
                 summaryHtmlOut +=
                     `<div class="stat"><div class="label">davon Pauschale (${p.monthCount} ${p.monthCount === 1 ? 'Monat' : 'Monate'})</div><div class="value">${fmtEUR(p.pauschaleTotal)}</div></div>`;
             }
+            if (p.teilweiseBefreit) {
+                mindestNoteHtml +=
+                    `<p class="muted small" style="margin-top:.75rem">` +
+                    `† Der RV-Status hat sich im Zeitraum geändert: in ${escapeHtml(p.befreitMonths.join(', '))} ` +
+                    `war ${escapeHtml(empName(empId))} von der RV-Pflicht befreit, in den übrigen Monaten nicht. ` +
+                    `Der RV-Anteil wurde monatsweise berechnet.` +
+                    `</p>`;
+            }
             if (p.mindestMonths.length) {
-                mindestNoteHtml =
+                mindestNoteHtml +=
                     `<p class="muted small" style="margin-top:.75rem">` +
                     `* In ${escapeHtml(p.mindestMonths.join(', '))} lag der Bruttolohn unter ${fmtEUR(MIN_BEITRAGSBEMESSUNG_EUR)}. ` +
                     `Der RV-Eigenanteil wurde aus der Mindestbeitragsbemessungsgrundlage berechnet und liegt daher höher als ${pctStr} %.` +
@@ -1824,7 +1903,9 @@
             const sec = secondRoomOf(s);
             const r1name = settings().rooms[s.room]?.name || '';
             const r2name = sec ? (settings().rooms[sec]?.name || '') : '';
-            const befreit = empRvBefreit(s.employeeId);
+            // Status des MONATS dieser Schicht, nicht der aktuelle Status des
+            // Mitarbeiters — sonst würde ein Statuswechsel alte Zeilen umschreiben.
+            const befreit = rvBefreitForMonth(s.employeeId, (s.date || '').slice(0, 7));
             const shiftPay = perShift.get(s.id) || { rvAnteil: 0, auszahlung: w.amount };
             rows.push([
                 s.date, empName(s.employeeId), s.startTime, s.endTime,
@@ -1845,10 +1926,11 @@
         const byEmp = new Map();
         let pauschaleSum = 0;
         empIds.forEach(empId => {
-            const befreit = empRvBefreit(empId);
             const empShifts = list.filter(s => s.employeeId === empId);
-            const p = payoutInfoForShifts(empShifts, befreit, empId);
-            byEmp.set(empId, { ...p, befreit });
+            const p = payoutInfoForShifts(empShifts, empId);
+            // befreit = durchgehend befreit im Zeitraum; bei einem Statuswechsel
+            // ist das false und der tatsächliche RV-Anteil steht in p.rvAnteil.
+            byEmp.set(empId, { ...p, befreit: p.alleBefreit });
             pauschaleSum += p.pauschaleTotal;
         });
         // Monatspauschalen erhöhen Brutto und werden 50/50 zwischen Owner1 und
@@ -1883,7 +1965,10 @@
             [...byEmp.entries()]
                 .sort((a, b) => empName(a[0]).localeCompare(empName(b[0]), 'de'))
                 .forEach(([empId, a]) => {
+                    // Bei einem RV-Statuswechsel im Zeitraum ist weder "befreit"
+                    // noch "pflichtig" allein korrekt — das wird ausgewiesen.
                     const flag = a.befreit ? ' (RV-befreit)'
+                               : a.teilweiseBefreit ? ' (RV teilw. befreit)'
                                : a.mindestMonths.length ? ' (*)' : '';
                     const row = [
                         empName(empId) + flag,
@@ -2062,7 +2147,7 @@
             return;
         }
 
-        const blob = buildMinijobPdfBlob(targetEmps, monthLabel);
+        const blob = buildMinijobPdfBlob(targetEmps, monthLabel, month);
         if (!blob) {
             toast('PDF konnte nicht erzeugt werden.', 'error');
             return;
@@ -2073,8 +2158,11 @@
     /* Pure: erzeugt Minijob-PDF aus einer vorbereiteten Mitarbeiter-Liste mit
      * Schicht-Stand. targetEmps = [{ emp, list }, …]. Wird vom UI-Export und
      * von der automatischen Monatsabschluss-Mail benutzt. Returns Blob, oder
-     * null wenn jspdf nicht geladen ist. */
-    function buildMinijobPdfBlob(targetEmps, monthLabel) {
+     * null wenn jspdf nicht geladen ist.
+     * month (YYYY-MM) ist der abgerechnete Monat — nötig, weil der RV-Status aus
+     * der Historie für GENAU diesen Monat gelesen wird. Ein späterer Statuswechsel
+     * darf ein früheres Monats-PDF nicht nachträglich verändern. */
+    function buildMinijobPdfBlob(targetEmps, monthLabel, month) {
         if (typeof window.jspdf === 'undefined') return null;
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
@@ -2150,16 +2238,22 @@
             // RV-Anteil Arbeitnehmer + Auszahlung anzeigen. payoutInfo erwartet
             // ein Monatsbrutto (inkl. Pauschale) und wendet bei Brutto < 175 EUR
             // automatisch die Mindestbeitragsbemessung an.
-            const p = payoutInfo(bruttoGesamt, !!emp.rvBefreit);
+            // Der RV-Status kommt aus der Historie für den ABGERECHNETEN Monat,
+            // nicht aus emp.rvBefreit (= aktueller Status). Fallback auf den Monat
+            // der ersten Schicht, falls der Aufrufer keinen Monat mitgibt — alle
+            // Schichten der Liste liegen konstruktionsbedingt im selben Monat.
+            const abrechnungsMonat = month || (list[0]?.date || '').slice(0, 7);
+            const befreit = rvBefreitForMonth(emp.id, abrechnungsMonat);
+            const p = payoutInfo(bruttoGesamt, befreit);
             const rvPctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
             doc.setFontSize(11);
-            const rvLabel = emp.rvBefreit
+            const rvLabel = befreit
                 ? `RV-Anteil AN (von der RV-Pflicht befreit):`
                 : p.mindestGreift
                     ? `RV-Anteil AN (Mindestbeitrag, Brutto < ${fmtEUR(MIN_BEITRAGSBEMESSUNG_EUR)}):`
                     : `RV-Anteil AN (${rvPctStr}%):`;
             doc.text(rvLabel, 40, yAfter + 18);
-            doc.text(emp.rvBefreit ? '–' : `− ${fmtEUR(p.rvAnteil)}`, 540, yAfter + 18, { align: 'right' });
+            doc.text(befreit ? '–' : `− ${fmtEUR(p.rvAnteil)}`, 540, yAfter + 18, { align: 'right' });
 
             doc.setFont(undefined, 'bold');
             doc.text(`Auszahlung an Mitarbeiter:`, 40, yAfter + 38);
@@ -2168,7 +2262,7 @@
 
             // Erläuterung zur Mindestbeitragsbemessung, wenn aktiv.
             let infoY = yAfter + 60;
-            if (!emp.rvBefreit && p.mindestGreift) {
+            if (!befreit && p.mindestGreift) {
                 doc.setFontSize(9); doc.setTextColor(120);
                 doc.text(
                     `Hinweis: Monatsbrutto unter ${fmtEUR(MIN_BEITRAGSBEMESSUNG_EUR)}. ` +
@@ -2227,9 +2321,17 @@
                     ? '<span class="badge">Buchhaltung</span>'
                     : '<span class="badge muted">Mitarbeiter</span>';
             const arbeitgeberLabel = ownerLabel(e.assignedTo);
-            const rvBadge = e.rvBefreit
+            // Badge zeigt den AKTUELLEN Status (jüngster Historien-Eintrag). Gab es
+            // einen Wechsel, wird sein Stichtag mit angezeigt — analog zur Pauschale.
+            const rvHist = Array.isArray(e.rvHistorie) ? e.rvHistorie : [];
+            const rvLatest = rvHist.length ? rvHist[rvHist.length - 1] : null;
+            const rvAbHint = rvHist.length > 1 && rvLatest
+                ? ` <span class="muted small">ab ${escapeHtml(rvLatest.gueltigAb)}</span>`
+                : '';
+            const rvBadge = (e.rvBefreit
                 ? '<span class="badge muted" title="Befreit — kein RV-Anteil-Abzug">RV-befreit</span>'
-                : '<span class="badge" title="RV-pflichtig — AN-Anteil wird vom Lohn abgezogen">RV-pflichtig</span>';
+                : '<span class="badge" title="RV-pflichtig — AN-Anteil wird vom Lohn abgezogen">RV-pflichtig</span>'
+            ) + rvAbHint;
             const pauschaleVal = Number(e.monatspauschale) || 0;
             const pauschaleAbVal = (typeof e.pauschaleAb === 'string' && /^\d{4}-\d{2}$/.test(e.pauschaleAb)) ? e.pauschaleAb : '';
             const pauschaleCell = pauschaleVal > 0
@@ -2251,7 +2353,7 @@
                     <button class="btn small" data-emp-pauschale="${e.id}">Pauschale ändern</button>
                     <button class="btn small" data-emp-admin="${e.id}">${e.isAdmin ? 'Admin entziehen' : 'Admin geben'}</button>
                     <button class="btn small" data-emp-acc="${e.id}">${e.isAccountant ? 'Buchhaltung entziehen' : 'Buchhaltung geben'}</button>
-                    <button class="btn small" data-emp-rv="${e.id}">${e.rvBefreit ? 'RV-Befreiung entziehen' : 'RV-Befreiung geben'}</button>
+                    <button class="btn small" data-emp-rv="${e.id}">RV-Status ändern</button>
                     <button class="btn small ${e.isActive ? 'danger' : ''}" data-emp-active="${e.id}">${e.isActive ? 'Deaktivieren' : 'Aktivieren'}</button>
                     <button class="btn small danger" data-emp-delete="${e.id}" title="Löscht den Mitarbeiter dauerhaft. Nur möglich, wenn keine Schichten im laufenden Monat existieren.">Löschen</button>
                 ` : '<span class="muted small">–</span>'}</td>
@@ -2318,12 +2420,42 @@
             renderEmployees();
             toast('Gespeichert', 'success');
         });
-        tbody.querySelectorAll('[data-emp-rv]').forEach(b => b.onclick = () => {
+        tbody.querySelectorAll('[data-emp-rv]').forEach(b => b.onclick = async () => {
             const emp = employees().find(x => x.id === Number(b.dataset.empRv));
-            emp.rvBefreit = !emp.rvBefreit;
+            const hist = Array.isArray(emp.rvHistorie) ? emp.rvHistorie : [];
+            // Bisherige Historie im Dialog zeigen, damit der Admin sieht, was er
+            // fortschreibt — ein Wechsel ändert nur Monate AB dem Stichtag.
+            const histTxt = hist
+                .map(h => `${h.gueltigAb}: ${h.befreit ? 'befreit' : 'pflichtig'}`)
+                .join(' · ');
+            const r = await promptModal(`RV-Status ändern — ${emp.name}`, [
+                {
+                    key: 'status',
+                    label: `Neuer Status${histTxt ? ` (bisher — ${histTxt})` : ''}`,
+                    options: [
+                        { value: 'pflichtig', label: 'RV-pflichtig (Anteil wird vom Lohn abgezogen)' },
+                        { value: 'befreit',   label: 'Von der RV-Pflicht befreit' },
+                    ],
+                    value: emp.rvBefreit ? 'befreit' : 'pflichtig',
+                },
+                {
+                    key: 'ab',
+                    label: 'Gilt ab Monat (frühere Monate bleiben unverändert)',
+                    type: 'month',
+                    value: todayLocalISO().slice(0, 7),
+                },
+            ]);
+            if (!r) return;
+            const ab = String(r.ab || '').trim();
+            if (!/^\d{4}-\d{2}$/.test(ab)) {
+                toast('Bitte einen Stichtags-Monat angeben (Format YYYY-MM).', 'error');
+                return;
+            }
+            const befreit = r.status === 'befreit';
+            setRvEintrag(emp, ab, befreit);
             saveData();
             renderEmployees();
-            toast(emp.rvBefreit ? 'Mitarbeiter ist RV-befreit' : 'Mitarbeiter ist RV-pflichtig', 'success');
+            toast(`Ab ${ab}: ${befreit ? 'RV-befreit' : 'RV-pflichtig'}`, 'success');
         });
         tbody.querySelectorAll('[data-emp-pauschale]').forEach(b => b.onclick = async () => {
             const emp = employees().find(x => x.id === Number(b.dataset.empPauschale));
@@ -2420,13 +2552,17 @@
         // Pauschale gibt; ansonsten leer (gilt dann ohne Beschränkung).
         const pauschaleAbRaw = String($('#empPauschaleAb').value || '').trim();
         const pauschaleAb = (pauschale > 0 && /^\d{4}-\d{2}$/.test(pauschaleAbRaw)) ? pauschaleAbRaw : '';
+        // Der Anfangsstatus gilt ab dem laufenden Monat. Ein neuer Mitarbeiter hat
+        // keine älteren Schichten, daher deckt dieser eine Eintrag alles ab.
+        const rvBefreitInit = $('#empRvBefreit').checked;
         state.data.employees.push({
             id: window.ParaloxStorage.nextId(employees()),
             name,
             password: hashed,
             isAdmin: $('#empAdmin').checked,
             isAccountant: $('#empAccountant').checked,
-            rvBefreit: $('#empRvBefreit').checked,
+            rvBefreit: rvBefreitInit,
+            rvHistorie: [{ gueltigAb: todayLocalISO().slice(0, 7), befreit: rvBefreitInit }],
             isActive: true,
             assignedTo: $('#empAssigned').value,
             monatspauschale: pauschale,
@@ -2825,7 +2961,7 @@
                     .filter(x => x.list.length > 0)
                     .sort((a, b) => a.emp.name.localeCompare(b.emp.name, 'de'));
                 if (targetEmps.length > 0) {
-                    const pdfBlob = buildMinijobPdfBlob(targetEmps, monthLabel);
+                    const pdfBlob = buildMinijobPdfBlob(targetEmps, monthLabel, targetMonth);
                     if (pdfBlob) {
                         files.push({
                             blob: pdfBlob,
