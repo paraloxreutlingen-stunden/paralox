@@ -3001,12 +3001,22 @@ window.ParaloxConfig = {
         const now = new Date();
         const year = now.getFullYear();
         const monthKey = `${year}-${pad(now.getMonth() + 1)}`;
+        const myId = state.user?.id;
         let yearAmt = 0, monthAmt = 0;
+        // Monate des laufenden Jahres mit ≥1 Schicht sammeln — nur dort besteht
+        // ein Pauschalenanspruch (analog Admin/„Meine Stunden": keine Pauschale
+        // ohne Schicht, die App führt keine Urlaub/Krankheit-Listen).
+        const yearMonths = new Set();
         list.forEach(s => {
             const a = wageFor(s).amount;
-            if (s.date.startsWith(String(year) + '-')) yearAmt += a;
+            if (s.date.startsWith(String(year) + '-')) { yearAmt += a; yearMonths.add(s.date.slice(0, 7)); }
             if (s.date.startsWith(monthKey)) monthAmt += a;
         });
+        // Monatspauschale gehört zum Brutto und zählt damit zur Minijob-Grenze —
+        // deshalb hier in Monats- und Jahresbetrag einrechnen. monatspauschaleForMonth
+        // berücksichtigt den Stichtag pauschaleAb (Monate davor tragen 0 bei).
+        yearMonths.forEach(m => { yearAmt += monatspauschaleForMonth(myId, m); });
+        if (yearMonths.has(monthKey)) monthAmt += monatspauschaleForMonth(myId, monthKey);
 
         const yStatus = yearAmt  > LIMIT_YEAR  ? 'danger' : (yearAmt  >= LIMIT_YEAR_WARN  ? 'warn' : 'ok');
         const mStatus = monthAmt > LIMIT_MONTH ? 'danger' : (monthAmt >= LIMIT_MONTH_WARN ? 'warn' : 'ok');
