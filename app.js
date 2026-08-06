@@ -2093,7 +2093,11 @@
         }
         rows.push([`Abgaben Owner2 (${pctStr}%)`, bAbg.toFixed(2)]);
         rows.push(['Gesamt Owner2 (EUR)', bTot.toFixed(2)]);
-        return { rows, list };
+        // summary = exakt die Werte der ZUSAMMENFASSUNG oben, damit andere
+        // Ausgaben (z. B. die PDF-Fußzeile) dieselben Zahlen zeigen und nichts
+        // abweicht.
+        const summary = { bruttoGesamt, sBase, sAbg, sTot, bBase, bAbg, bTot, pauschaleSum };
+        return { rows, list, summary };
     }
 
     function exportRows() {
@@ -2154,7 +2158,7 @@
 
     function exportPDF() {
         if (typeof window.jspdf === 'undefined') { toast('PDF-Library nicht geladen', 'error'); return; }
-        const { rows, list } = exportRows();
+        const { rows, list, summary } = exportRows();
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
         const y = readPeriodYear('#adminYear');
@@ -2173,16 +2177,11 @@
         doc.setFontSize(10); doc.setTextColor(120); doc.text(subtitle, 40, 58);
         doc.setTextColor(0);
 
-        let totalAmt = 0, totalMin = 0;
-        const agg = { sBase: 0, sAbg: 0, sTotal: 0, bBase: 0, bAbg: 0, bTotal: 0 };
-        list.forEach(s => {
-            const w = wageFor(s);
-            const c = splitCost(s);
-            totalAmt += w.amount;
-            totalMin += w.minutes;
-            agg.sBase += c.owner1Base; agg.sAbg += c.owner1Abgaben; agg.sTotal += c.owner1Total;
-            agg.bBase += c.owner2Base; agg.bAbg += c.owner2Abgaben; agg.bTotal += c.owner2Total;
-        });
+        // Nur Minuten hier selbst summieren (keine Rundung nötig); alle Geld-
+        // Beträge kommen aus summary — denselben Werten wie die ZUSAMMENFASSUNG in
+        // der Tabelle, damit auf dem PDF nirgends abweichende Zahlen stehen.
+        let totalMin = 0;
+        list.forEach(s => { totalMin += wageFor(s).minutes; });
 
         doc.autoTable({
             head: [rows[0]],
@@ -2195,9 +2194,9 @@
         const yPos = doc.lastAutoTable.finalY + 20;
         const pctStr = String(ABGABEN_PCT).replace('.', ',');
         doc.setFontSize(10);
-        doc.text(`Einträge: ${list.length}   Stunden: ${fmtHours(totalMin)}   Verdienst gesamt: ${fmtEUR(totalAmt)}`, 40, yPos);
-        doc.text(`Owner1:   Kosten ${fmtEUR(agg.sBase)}  +  Abgaben (${pctStr}%) ${fmtEUR(agg.sAbg)}  =  Gesamt ${fmtEUR(agg.sTotal)}`, 40, yPos + 16);
-        doc.text(`Owner2: Kosten ${fmtEUR(agg.bBase)}  +  Abgaben (${pctStr}%) ${fmtEUR(agg.bAbg)}  =  Gesamt ${fmtEUR(agg.bTotal)}`, 40, yPos + 32);
+        doc.text(`Einträge: ${list.length}   Stunden: ${fmtHours(totalMin)}   Verdienst gesamt: ${fmtEUR(summary.bruttoGesamt)}`, 40, yPos);
+        doc.text(`Owner1:   Kosten ${fmtEUR(summary.sBase)}  +  Abgaben (${pctStr}%) ${fmtEUR(summary.sAbg)}  =  Gesamt ${fmtEUR(summary.sTot)}`, 40, yPos + 16);
+        doc.text(`Owner2: Kosten ${fmtEUR(summary.bBase)}  +  Abgaben (${pctStr}%) ${fmtEUR(summary.bAbg)}  =  Gesamt ${fmtEUR(summary.bTot)}`, 40, yPos + 32);
         doc.save(exportFilenameBase() + '.pdf');
     }
 
