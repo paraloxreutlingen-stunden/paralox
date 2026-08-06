@@ -274,7 +274,13 @@ async function newPage() {
                 id: 300, name: 'ToggleMA', password: 'paralox',
                 isAdmin: false, isAccountant: false, rvBefreit: false,
                 isActive: true, assignedTo: 'owner1',
-                createdAt: new Date().toISOString(),
+                createdAt: '2025-01-01T00:00:00Z',
+                // Früher datierter Anker, damit der Wechsel auf 2026-08 einen
+                // ZWEITEN Historien-Eintrag erzeugt (sonst — ohne Schichten —
+                // ankert normalize auf den aktuellen Monat, und ein Wechsel im
+                // selben Monat würde nur den Anker ersetzen statt einen Wechsel
+                // anzulegen). So ist der Test unabhängig vom heutigen Datum.
+                rvHistorie: [{ gueltigAb: '2025-01', befreit: false }],
             });
             localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
         });
