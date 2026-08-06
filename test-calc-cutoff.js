@@ -1,15 +1,16 @@
 /* Tests für die verfeinerte Berechnung ab Stichtag (CALC_V2_FROM_MONTH = 2026-08):
- *  - Vor dem Stichtag (Juli 2026): Schicht-Beträge werden wie zuvor einzeln
- *    gerundet; die angezeigten Zeilen summieren sich NICHT zwangsläufig zum
- *    (wahren) Gesamtbetrag — frühere Monate bleiben unverändert.
- *  - Ab dem Stichtag (August 2026): die Zeilen werden per Largest-Remainder auf
- *    Cent verteilt und summieren sich EXAKT zum angezeigten Verdienst.
- *  - In BEIDEN Fällen bleibt der Verdienst/Brutto der wahre Rundungswert (70,00),
- *    damit er mit dem Brutto der Lohnberechnung übereinstimmt.
+ *  - Vor dem Stichtag (Juli 2026): Rohwerte werden summiert und erst der
+ *    Gesamtwert gerundet (Verdienst/Brutto = 70,00). Die einzeln gerundeten
+ *    Zeilen (23,33) summieren sich NICHT zwangsläufig dahin — frühere Monate
+ *    bleiben unverändert.
+ *  - Ab dem Stichtag (August 2026): jede Schicht wird EINMAL auf Cent gerundet
+ *    (23,33) und ALLE Summen daraus gebildet. Jede Schicht zeigt überall
+ *    denselben Betrag, und Verdienst = Brutto = Summe der Zeilen (69,99) — es
+ *    steht nirgends ein abweichender Betrag (kein „geschummelter" 23,34-Cent).
  *
  * Aufbau: 3 Schichten à 100 Min (08:00–09:40) zu 14 EUR/h = je 23,3333 EUR.
- *   Roh gerundet:  23,33 · 3 = 69,99   (Zeilensumme alt)
- *   Wahre Summe:   70,00               (Verdienst)
+ *   Pro Zeile gerundet: 23,33 · 3 = 69,99   (ab Stichtag = Verdienst = Brutto)
+ *   Roh summiert:       70,00               (vor Stichtag = Verdienst = Brutto)
  */
 'use strict';
 const { chromium } = require('playwright-core');
@@ -105,13 +106,13 @@ function eurToCents(txt) {
         console.log('  Betrag-Zeilen:', betrag.join(' | '), '· Summe', (sum / 100).toFixed(2), '· Verdienst', (verdienst / 100).toFixed(2));
         check('3 Schicht-Zeilen sichtbar', cents.length === 3, String(cents.length));
         check('Jede Zeile zeigt 23,33 EUR (roh gerundet)', cents.every(c => c === 2333));
-        check('Verdienst ist der WAHRE Wert 70,00 EUR', verdienst === 7000, (verdienst / 100).toFixed(2));
-        check('Brutto (Lohnberechnung) = 70,00 EUR', brutto === 7000, (brutto / 100).toFixed(2));
+        check('Verdienst = roh summiert & gerundet = 70,00 EUR', verdienst === 7000, (verdienst / 100).toFixed(2));
+        check('Brutto (Lohnberechnung) = Verdienst (70,00)', brutto === verdienst && brutto === 7000, (brutto / 100).toFixed(2));
         check('Zeilensumme bleibt alt (69,99 ≠ Verdienst) — nicht rückwirkend', sum === 6999, (sum / 100).toFixed(2));
     }
 
     // -------- Ab Stichtag (August 2026) --------
-    console.log('\n=== Ab Stichtag: August 2026 (Zeilen summieren exakt auf den Verdienst) ===');
+    console.log('\n=== Ab Stichtag: August 2026 (jede Schicht ihr echter Betrag, alles stimmig) ===');
     {
         const { betrag, summary } = await inspect('AbStichtag');
         const cents = betrag.map(eurToCents);
@@ -120,10 +121,13 @@ function eurToCents(txt) {
         const brutto = eurToCents((summary.match(/Brutto AbStichtag\s*([\d.,]+)\s*EUR/) || [])[1] || '');
         console.log('  Betrag-Zeilen:', betrag.join(' | '), '· Summe', (sum / 100).toFixed(2), '· Verdienst', (verdienst / 100).toFixed(2));
         check('3 Schicht-Zeilen sichtbar', cents.length === 3, String(cents.length));
-        check('Verdienst ist der WAHRE Wert 70,00 EUR', verdienst === 7000, (verdienst / 100).toFixed(2));
-        check('Brutto (Lohnberechnung) = 70,00 EUR', brutto === 7000, (brutto / 100).toFixed(2));
-        check('Zeilensumme = Verdienst (70,00) — reconciliert', sum === verdienst && sum === 7000, (sum / 100).toFixed(2));
-        check('Genau eine Zeile trägt den Rest-Cent (23,34)', cents.filter(c => c === 2334).length === 1, betrag.join(' | '));
+        check('Jede Schicht zeigt ihren echten Wert 23,33 EUR (kein 23,34)',
+            cents.every(c => c === 2333), betrag.join(' | '));
+        check('Verdienst = Summe der gerundeten Zeilen = 69,99 EUR', verdienst === 6999, (verdienst / 100).toFixed(2));
+        check('Brutto (Lohnberechnung) = Verdienst (69,99) — kein abweichender Wert',
+            brutto === verdienst && brutto === 6999, (brutto / 100).toFixed(2));
+        check('Zeilensumme = Verdienst = Brutto (alles stimmig)',
+            sum === verdienst && sum === brutto && sum === 6999, (sum / 100).toFixed(2));
     }
 
     await browser.close();
