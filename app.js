@@ -1480,13 +1480,24 @@
         return Math.round((n + Number.EPSILON) * 100) / 100;
     }
 
-    /* Interne Rechen-Präzision: 4 Nachkommastellen. Zwischenergebnisse der Lohn-
-     * und RV-Berechnung (Brutto, RV-Eigenanteil, Auszahlung) werden auf 4 statt
-     * 2 Stellen geführt, damit sich die Cent-Rundung nicht über mehrere Schritte
-     * (pro Monat, dann Summe über den Zeitraum) zu sichtbaren Differenzen
-     * aufsummiert. Erst zur ANZEIGE rundet fmtEUR bzw. roundHalfUp auf 2 Stellen.
-     * +Number.EPSILON verschiebt knapp-unter-.5-Werte wie bei roundHalfUp
-     * zuverlässig über die Rundungsschwelle. */
+    /* Stichtag für die verfeinerte Berechnung: Erst ab diesem Monat (YYYY-MM)
+     * gilt die interne 4-Nachkommastellen-Rechnung UND die Zeilensummen-
+     * Reconciliation. Frühere Monate rechnen bit-genau wie zuvor (2-Stellen-
+     * Zwischenrundung, keine Cent-Umverteilung) — damit bereits ausgezahlte und
+     * an die Minijob-Zentrale gemeldete Lohnabrechnungen unverändert
+     * reproduzierbar bleiben. Bei einer erneuten gesetzlichen/rechnerischen
+     * Umstellung hier den Stichtag hochsetzen. */
+    const CALC_V2_FROM_MONTH = '2026-08';
+    const isCalcV2Month = month => (month || '') >= CALC_V2_FROM_MONTH;
+    const isCalcV2Date  = date  => (date  || '').slice(0, 7) >= CALC_V2_FROM_MONTH;
+
+    /* Interne Rechen-Präzision ab dem Stichtag: 4 Nachkommastellen.
+     * Zwischenergebnisse der Lohn-/RV-Berechnung (Brutto, RV-Eigenanteil,
+     * Auszahlung) werden auf 4 statt 2 Stellen geführt, damit sich die Cent-
+     * Rundung nicht über mehrere Schritte (pro Monat, dann Summe über den
+     * Zeitraum) zu sichtbaren Differenzen aufsummiert. Erst zur ANZEIGE rundet
+     * fmtEUR bzw. roundHalfUp auf 2 Stellen. +Number.EPSILON verschiebt
+     * knapp-unter-.5-Werte wie bei roundHalfUp zuverlässig über die Schwelle. */
     function round4(n) {
         return Math.round((n + Number.EPSILON) * 10000) / 10000;
     }
@@ -1519,22 +1530,26 @@
      * - Brutto < 175 EUR: Mindestbeitragsbemessung greift,
      *     AN-Anteil = 32,55 EUR (Gesamt-Mindestbeitrag) − 15 % AG-Pauschale vom Brutto
      * - Brutto ≥ 175 EUR: regulär settings.rvAnteilProzent vom Brutto
-     * mindestGreift = true wenn die Mindestlogik aktiv war (für Hinweis im PDF/Export). */
-    function payoutInfo(monatsBrutto, rvBefreit) {
-        // Intern auf 4 Stellen rechnen; die Rundung auf Cent macht erst die
-        // Anzeige (fmtEUR) bzw. der Export (roundHalfUp vor toFixed).
-        const brutto = round4(monatsBrutto);
+     * mindestGreift = true wenn die Mindestlogik aktiv war (für Hinweis im PDF/Export).
+     * month (YYYY-MM) entscheidet über die Rechen-Präzision: ab dem Stichtag
+     * 4 Nachkommastellen (round4), davor die alte 2-Stellen-Rundung (roundHalfUp),
+     * damit frühere Abrechnungen unverändert bleiben. */
+    function payoutInfo(monatsBrutto, rvBefreit, month) {
+        // Ab dem Stichtag intern auf 4 Stellen rechnen (Cent-Rundung erst in der
+        // Anzeige), davor wie bisher direkt auf Cent runden.
+        const R = isCalcV2Month(month) ? round4 : roundHalfUp;
+        const brutto = R(monatsBrutto);
         if (rvBefreit) {
             return { brutto, rvAnteil: 0, auszahlung: brutto, mindestGreift: false };
         }
         if (brutto < MIN_BEITRAGSBEMESSUNG_EUR) {
-            const agAnteil = round4(brutto * AG_PAUSCHALE_GEWERBE_PCT / 100);
-            const rvAnteil = round4(MIN_BEITRAG_GESAMT_EUR - agAnteil);
-            return { brutto, rvAnteil, auszahlung: round4(brutto - rvAnteil), mindestGreift: true };
+            const agAnteil = R(brutto * AG_PAUSCHALE_GEWERBE_PCT / 100);
+            const rvAnteil = R(MIN_BEITRAG_GESAMT_EUR - agAnteil);
+            return { brutto, rvAnteil, auszahlung: R(brutto - rvAnteil), mindestGreift: true };
         }
         const pct = Number(settings().rvAnteilProzent) || 0;
-        const rvAnteil = round4(brutto * pct / 100);
-        return { brutto, rvAnteil, auszahlung: round4(brutto - rvAnteil), mindestGreift: false };
+        const rvAnteil = R(brutto * pct / 100);
+        return { brutto, rvAnteil, auszahlung: R(brutto - rvAnteil), mindestGreift: false };
     }
 
     /* Aggregiert payoutInfo MONATSWEISE über eine Schicht-Liste und summiert
@@ -1569,7 +1584,7 @@
             const pauschale = monatspauschaleForMonth(empId, month);
             const monatsBrutto = schichtBrutto + pauschale;
             if (pauschale > 0) { pauschaleTotal += pauschale; pauschaleMonths += 1; }
-            const p = payoutInfo(monatsBrutto, befreit);
+            const p = payoutInfo(monatsBrutto, befreit, month);
             brutto += p.brutto;
             rvAnteil += p.rvAnteil;
             auszahlung += p.auszahlung;
@@ -1656,7 +1671,7 @@
                 // minus Summe der Schicht-Anteile und wird im Summary separat
                 // ausgewiesen (über payoutInfoForShifts), NICHT auf Schichten.
                 const monatsBruttoTotal = schichtBrutto + pauschale;
-                const monthInfo = payoutInfo(monatsBruttoTotal, befreit);
+                const monthInfo = payoutInfo(monatsBruttoTotal, befreit, month);
                 if (befreit || monatsBruttoTotal === 0) {
                     monthShifts.forEach((s, i) => result.set(s.id, {
                         rvAnteil: 0,
@@ -1703,25 +1718,31 @@
         const tbody = $('#adminTable tbody');
         const list = currentAdminFiltered();
         tbody.innerHTML = '';
-        let totalMin = 0;
-        // Summen der ANGEZEIGTEN (auf Cent gerundeten) Zeilenwerte — so ergibt
-        // die Summe der Spalte exakt den angezeigten Gesamtbetrag ("was man
-        // sieht, summiert sich"). Die exakte Basis (trueBase*) wird parallel
-        // mitgeführt, damit die Abgaben ökonomisch korrekt aus dem ungerundeten
-        // Betrag berechnet werden.
-        let sumAmtRow = 0, sumOwner1Row = 0, sumOwner2Row = 0;
-        let trueBaseS = 0, trueBaseB = 0;
-        list.forEach(s => {
-            const w = wageFor(s);
-            const c = splitCost(s);
-            // Erst auf Cent runden, dann anzeigen UND summieren — dadurch ist
-            // die aufsummierte Spalte deckungsgleich mit den sichtbaren Zellen.
-            const aCent = roundHalfUp(w.amount);
-            const sCent = roundHalfUp(c.owner1Base);
-            const bCent = roundHalfUp(c.owner2Base);
+        let totalMin = 0, totalAmt = 0;
+        const agg = { sBase: 0, sAbg: 0, sTotal: 0, bBase: 0, bAbg: 0, bTotal: 0 };
+        // Anzeige-Beträge der Zeilen: ab dem Stichtag per Largest-Remainder auf
+        // Cent verteilt, damit die Spalten exakt zu den Gesamtwerten aufsummieren;
+        // davor die Rohwerte wie bisher. Die Gesamt-/Kosten-/Abgaben-Summen bleiben
+        // in BEIDEN Fällen die echten Rundungssummen (aus den Rohwerten) — so
+        // stimmen sie mit dem Brutto der Lohnberechnung überein, Owner1+Owner2
+        // gehen auf den Brutto auf, und frühere Monate bleiben unverändert.
+        const wArr = list.map(wageFor);
+        const cArr = list.map(splitCost);
+        const hasV2 = list.some(s => isCalcV2Date(s.date));
+        const showAmt = hasV2 ? distributeCents(wArr.map(w => w.amount))       : wArr.map(w => w.amount);
+        const showS   = hasV2 ? distributeCents(cArr.map(c => c.owner1Base))   : cArr.map(c => c.owner1Base);
+        const showB   = hasV2 ? distributeCents(cArr.map(c => c.owner2Base)) : cArr.map(c => c.owner2Base);
+        list.forEach((s, i) => {
+            const w = wArr[i];
+            const c = cArr[i];
             totalMin += w.minutes;
-            sumAmtRow += aCent; sumOwner1Row += sCent; sumOwner2Row += bCent;
-            trueBaseS += c.owner1Base; trueBaseB += c.owner2Base;
+            totalAmt += w.amount;
+            agg.sBase  += c.owner1Base;
+            agg.sAbg   += c.owner1Abgaben;
+            agg.sTotal += c.owner1Total;
+            agg.bBase  += c.owner2Base;
+            agg.bAbg   += c.owner2Abgaben;
+            agg.bTotal += c.owner2Total;
             const tr = document.createElement('tr');
             tr.dataset.id = s.id;
             tr.innerHTML = `
@@ -1732,9 +1753,9 @@
                 <td class="num">${fmtHours(w.minutes)}</td>
                 <td>${roomsLabel(s)}</td>
                 <td>${s.isDouble ? '<span class="badge double">Doppel</span>' : '<span class="badge muted">Einfach</span>'}</td>
-                <td class="num">${fmtEUR(aCent)}</td>
-                <td class="num">${fmtEUR(sCent)}</td>
-                <td class="num">${fmtEUR(bCent)}</td>
+                <td class="num">${fmtEUR(showAmt[i])}</td>
+                <td class="num">${fmtEUR(showS[i])}</td>
+                <td class="num">${fmtEUR(showB[i])}</td>
                 <td>${escapeHtml(s.note || '')}</td>
                 <td>${isAdmin() ? `
                     <button class="btn small" data-edit="${s.id}">Bearb.</button>
@@ -1762,21 +1783,16 @@
             // Monate vor dem Stichtag keine Pauschale beitragen.
             months.forEach(month => { pauschaleSum += monatspauschaleForMonth(empId, month); });
         });
-        // Anzeige-Gesamtwerte: Spaltensumme (angezeigte Zeilen) + Pauschale-Anteil.
-        // Abgaben aus der exakten Basis (inkl. voller Pauschale-Hälfte), damit
-        // der 31,17-%-Betrag stimmt; Gesamt = Kosten + Abgaben (tie-out).
-        const pauschaleHalf     = pauschaleSum / 2;
-        const pauschaleHalfDisp = roundHalfUp(pauschaleHalf);
-        trueBaseS += pauschaleHalf; trueBaseB += pauschaleHalf;
-        const agg = {
-            sBase: roundHalfUp(sumOwner1Row   + pauschaleHalfDisp),
-            bBase: roundHalfUp(sumOwner2Row + pauschaleHalfDisp),
-            sAbg:  roundHalfUp(trueBaseS * factor),
-            bAbg:  roundHalfUp(trueBaseB * factor),
-        };
-        agg.sTotal = roundHalfUp(agg.sBase + agg.sAbg);
-        agg.bTotal = roundHalfUp(agg.bBase + agg.bAbg);
-        const totalAmt = roundHalfUp(sumAmtRow + roundHalfUp(pauschaleSum));
+        if (pauschaleSum > 0) {
+            const half = pauschaleSum / 2;
+            agg.sBase  += half;
+            agg.sAbg   += half * factor;
+            agg.sTotal += half * (1 + factor);
+            agg.bBase  += half;
+            agg.bAbg   += half * factor;
+            agg.bTotal += half * (1 + factor);
+            totalAmt   += pauschaleSum;
+        }
         let summaryHtmlOut = adminSummaryHtml(list.length, totalMin, totalAmt, agg);
         if (pauschaleSum > 0) {
             summaryHtmlOut += `<div class="stat"><div class="label">davon Monatspauschalen</div><div class="value">${fmtEUR(pauschaleSum)}</div></div>`;
@@ -1947,26 +1963,27 @@
             'Auszahlung (EUR)',
             'Kosten Owner1','Kosten Owner2','Notiz'
         ]];
-        // tot summiert die ANGEZEIGTEN (auf Cent gerundeten) Zeilenwerte, damit
-        // sich Brutto-/Kostenspalten exakt zu den Summary-Zeilen aufaddieren.
-        // trueBase* führt parallel die exakte Basis für die Abgabenberechnung.
-        const tot = { hours: 0, amtRow: 0, sRow: 0, bRow: 0 };
-        let trueBaseS = 0, trueBaseB = 0;
+        // Gesamtwerte (tot.*) sind die echten Rundungssummen aus den Rohwerten —
+        // exakt wie zuvor. Die angezeigten Schicht-Beträge werden ab dem Stichtag
+        // per Largest-Remainder auf Cent verteilt, damit die Spalten exakt zu den
+        // Summary-Zeilen aufsummieren; frühere Monate zeigen die Rohwerte.
+        const tot = { hours: 0, amt: 0, sBase: 0, bBase: 0 };
+        const hasV2 = list.some(s => isCalcV2Date(s.date));
+        const wArr = list.map(wageFor);
+        const cArr = list.map(splitCost);
+        const showAmt = hasV2 ? distributeCents(wArr.map(w => w.amount))       : wArr.map(w => w.amount);
+        const showS   = hasV2 ? distributeCents(cArr.map(c => c.owner1Base))   : cArr.map(c => c.owner1Base);
+        const showB   = hasV2 ? distributeCents(cArr.map(c => c.owner2Base)) : cArr.map(c => c.owner2Base);
         // Schicht-RV/Auszahlung wird monatsweise vor-berechnet — sonst würde
         // pro-Schicht-Multiplikation mit 3,6 % den Mindestbeitrag bei Brutto
         // < 175 EUR/Monat systematisch unterschätzen.
         const perShift = perShiftPayoutMap(list);
-        list.forEach(s => {
-            const w = wageFor(s);
-            const c = splitCost(s);
+        list.forEach((s, i) => {
+            const w = wArr[i];
+            const c = cArr[i];
             const hours = w.minutes / 60;
-            // Erst auf Cent runden, dann anzeigen UND summieren.
-            const aCent = roundHalfUp(w.amount);
-            const sCent = roundHalfUp(c.owner1Base);
-            const bCent = roundHalfUp(c.owner2Base);
             tot.hours += hours;
-            tot.amtRow += aCent; tot.sRow += sCent; tot.bRow += bCent;
-            trueBaseS += c.owner1Base; trueBaseB += c.owner2Base;
+            tot.amt += w.amount; tot.sBase += c.owner1Base; tot.bBase += c.owner2Base;
             const sec = secondRoomOf(s);
             const r1name = settings().rooms[s.room]?.name || '';
             const r2name = sec ? (settings().rooms[sec]?.name || '') : '';
@@ -1979,10 +1996,10 @@
                 hours.toFixed(2), s.room, sec || '',
                 sec ? `${r1name} + ${r2name}` : r1name,
                 s.isDouble ? 'Doppel' : 'Einfach',
-                w.rate.toFixed(2), aCent.toFixed(2),
+                w.rate.toFixed(2), showAmt[i].toFixed(2),
                 befreit ? '0,00' : shiftPay.rvAnteil.toFixed(2),
                 shiftPay.auszahlung.toFixed(2),
-                sCent.toFixed(2), bCent.toFixed(2),
+                showS[i].toFixed(2), showB[i].toFixed(2),
                 s.note || ''
             ]);
         });
@@ -2004,22 +2021,22 @@
         // Owner2 aufgeteilt (NICHT raumbasiert). Die Pauschalabgaben (31,17 %)
         // fallen darauf wie auf jedes andere Brutto an.
         const factor = ABGABEN_PCT / 100;
-        // Anzeige-Gesamtwerte: Spaltensumme der angezeigten Zeilen + Pauschale-
-        // Anteil. Abgaben aus der exakten Basis (inkl. voller Pauschale-Hälfte),
-        // Gesamt = Kosten + Abgaben (tie-out).
-        const pauschaleHalf     = pauschaleSum / 2;
-        const pauschaleHalfDisp = roundHalfUp(pauschaleHalf);
-        trueBaseS += pauschaleHalf; trueBaseB += pauschaleHalf;
-        const bruttoGesamt = roundHalfUp(tot.amtRow + roundHalfUp(pauschaleSum));
-        const sBase = roundHalfUp(tot.sRow + pauschaleHalfDisp);
-        const bBase = roundHalfUp(tot.bRow + pauschaleHalfDisp);
-        const sAbg = roundHalfUp(trueBaseS * factor), sTot = roundHalfUp(sBase + sAbg);
-        const bAbg = roundHalfUp(trueBaseB * factor), bTot = roundHalfUp(bBase + bAbg);
+        // Gesamt-/Kosten-/Abgaben-Summen wie zuvor aus den Rohwerten; Monats-
+        // pauschale 50/50 aufschlagen. Die Zeilen-Reconciliation (oben) ändert
+        // NUR die Anzeige der Einzelzeilen, nicht diese echten Summen.
+        if (pauschaleSum > 0) {
+            const half = pauschaleSum / 2;
+            tot.sBase += half;
+            tot.bBase += half;
+            tot.amt   += pauschaleSum;
+        }
+        const sAbg = tot.sBase * factor, sTot = tot.sBase + sAbg;
+        const bAbg = tot.bBase * factor, bTot = tot.bBase + bAbg;
         rows.push([]);
         rows.push(['ZUSAMMENFASSUNG']);
         rows.push(['Einträge', list.length]);
         rows.push(['Stunden gesamt', tot.hours.toFixed(2)]);
-        rows.push(['Brutto Mitarbeiter gesamt (EUR)', bruttoGesamt.toFixed(2)]);
+        rows.push(['Brutto Mitarbeiter gesamt (EUR)', tot.amt.toFixed(2)]);
         if (pauschaleSum > 0) {
             rows.push(['  davon Monatspauschalen (EUR)', pauschaleSum.toFixed(2)]);
         }
@@ -2064,16 +2081,16 @@
             rows.push([`Der RV-Eigenanteil wurde dort aus der Mindestbeitragsbemessungsgrundlage berechnet (Gesamtbeitrag ${MIN_BEITRAG_GESAMT_EUR.toFixed(2)} EUR abzüglich AG-Pauschale ${AG_PAUSCHALE_GEWERBE_PCT} % vom Brutto) und liegt daher höher als ${rvPctStr} %.`]);
         }
         rows.push([]);
-        rows.push(['Kosten Owner1 (EUR)', sBase.toFixed(2)]);
+        rows.push(['Kosten Owner1 (EUR)', tot.sBase.toFixed(2)]);
         if (pauschaleSum > 0) {
-            rows.push(['  davon Pauschale-Anteil 50% (EUR)', pauschaleHalfDisp.toFixed(2)]);
+            rows.push(['  davon Pauschale-Anteil 50% (EUR)', (pauschaleSum / 2).toFixed(2)]);
         }
         rows.push([`Abgaben Owner1 (${pctStr}%)`, sAbg.toFixed(2)]);
         rows.push(['Gesamt Owner1 (EUR)', sTot.toFixed(2)]);
         rows.push([]);
-        rows.push(['Kosten Owner2 (EUR)', bBase.toFixed(2)]);
+        rows.push(['Kosten Owner2 (EUR)', tot.bBase.toFixed(2)]);
         if (pauschaleSum > 0) {
-            rows.push(['  davon Pauschale-Anteil 50% (EUR)', pauschaleHalfDisp.toFixed(2)]);
+            rows.push(['  davon Pauschale-Anteil 50% (EUR)', (pauschaleSum / 2).toFixed(2)]);
         }
         rows.push([`Abgaben Owner2 (${pctStr}%)`, bAbg.toFixed(2)]);
         rows.push(['Gesamt Owner2 (EUR)', bTot.toFixed(2)]);
@@ -2251,12 +2268,17 @@
             doc.text(`Arbeitgeber:  ${arbeitgeber}`, 40, 110);
             doc.setTextColor(0);
 
-            // Schicht-Beträge werden per Largest-Remainder auf Cent verteilt,
-            // damit die angezeigten Einzelzeilen exakt den darunter
-            // ausgewiesenen Lohn aus Schichten / Brutto ergeben (keine
-            // 1-Cent-Differenz zwischen Zeilensumme und Gesamtbetrag).
+            // Ab dem Stichtag werden die Schicht-Beträge per Largest-Remainder
+            // auf Cent verteilt, damit die angezeigten Einzelzeilen exakt den
+            // darunter ausgewiesenen Lohn aus Schichten / Brutto ergeben (keine
+            // 1-Cent-Differenz zwischen Zeilensumme und Gesamtbetrag). Für frühere
+            // Monate wird jede Schicht wie bisher einzeln gerundet, damit bereits
+            // erzeugte Lohn-PDFs unverändert reproduzierbar bleiben.
             const wages = list.map(s => wageFor(s));
-            const shownAmounts = distributeCents(wages.map(w => w.amount));
+            const isV2 = isCalcV2Month(month || (list[0]?.date || '').slice(0, 7));
+            const shownAmounts = isV2
+                ? distributeCents(wages.map(w => w.amount))
+                : wages.map(w => w.amount);
             const body = list.map((s, i) => {
                 const w = wages[i];
                 return [
@@ -2322,7 +2344,7 @@
             // Schichten der Liste liegen konstruktionsbedingt im selben Monat.
             const abrechnungsMonat = month || (list[0]?.date || '').slice(0, 7);
             const befreit = rvBefreitForMonth(emp.id, abrechnungsMonat);
-            const p = payoutInfo(bruttoGesamt, befreit);
+            const p = payoutInfo(bruttoGesamt, befreit, abrechnungsMonat);
             const rvPctStr = String(Number(settings().rvAnteilProzent) || 0).replace('.', ',');
             doc.setFontSize(11);
             const rvLabel = befreit

@@ -64,7 +64,9 @@ Inlinet `style.css`, `config.js`, `crypto.js`, `storage.js`, `app.js` in `index.
 
 ## Tests
 
-Playwright-Tests im Root, mit `node test-*.js` einzeln ausführbar. Decken ab: Tablet-Login-Layout, Tabs pro Rolle, RV-Auszahlung, Local-Mode, Tagessicherung, Monatsabschluss-Archiv, PWA-Setup, DSGVO-Dynamik, 90-Tage-Buchhaltungs-Limit, Running-Shift-Workflow.
+Playwright-Tests im Root, mit `node test-*.js` einzeln ausführbar. Decken ab: Tablet-Login-Layout, Tabs pro Rolle, RV-Auszahlung, Local-Mode, Tagessicherung, Monatsabschluss-Archiv, PWA-Setup, DSGVO-Dynamik, 90-Tage-Buchhaltungs-Limit, Running-Shift-Workflow, Rechnungs-Stichtag (`test-calc-cutoff.js`: 4-Nachkommastellen-Rundung + Zeilensummen-Reconciliation gelten erst ab `CALC_V2_FROM_MONTH` = 2026-08, frühere Monate unverändert).
+
+Ausführung braucht `playwright-core` (`npm i --no-save playwright-core`, lokales Chrome wird genutzt) und einen statischen Server auf `:8080`, der `paralox-stunden.html` ausliefert.
 
 Tests laufen gegen **Test-Daten**, nicht gegen die produktiven Daten — beim Schreiben neuer Tests darauf achten.
 
