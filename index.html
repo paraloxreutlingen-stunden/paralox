@@ -440,6 +440,20 @@
     </div>
 </div>
 
+<!-- Jährliche Resturlaubs-Erinnerung: erscheint ab dem 30. März bis Ende Juni
+     einmal pro Mitarbeiter und Jahr und muss aktiv als gelesen bestätigt
+     werden. Die Bestätigung liegt in paraloxStunden.vacationReminder; im
+     Folgejahr poppt der Hinweis automatisch wieder auf. -->
+<div class="modal hidden" id="vacationReminderModal">
+    <div class="modal-box vacation-reminder">
+        <h3>🏖️ Erinnerung: Resturlaub</h3>
+        <div id="vacationReminderText"></div>
+        <div class="actions">
+            <button class="btn primary" id="vacationReminderBtn" type="button">Gelesen und verstanden</button>
+        </div>
+    </div>
+</div>
+
 <div class="toast-wrap" id="toasts"></div>
 
 <!-- Externe Libraries für Export -->
@@ -459,9 +473,9 @@
 <!-- Versionssuffix erzwingt Neuladen nach Updates (anstelle des Browser-Caches) -->
 <script src="config.js?v=2" defer></script>
 <script src="crypto.js?v=1" defer></script>
-<script src="storage.js?v=3" defer></script>
+<script src="storage.js?v=4" defer></script>
 <!-- <script src="drive.js?v=2" defer></script> -->
-<script src="app.js?v=3" defer></script>
+<script src="app.js?v=4" defer></script>
 
 <!-- PWA-Service-Worker registrieren. Funktioniert nur unter https:// (oder
      localhost / 127.0.0.1 zum Entwickeln). Im file://-Modus ist navigator

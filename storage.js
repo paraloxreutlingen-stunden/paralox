@@ -15,6 +15,11 @@
     // damit ein importiertes Backup auf einem neuen Gerät erneut die
     // Zustimmung verlangt.
     const DSGVO_ACCEPTED_KEY = 'paraloxStunden.dsgvoAccepted';
+    // Bestätigung der jährlichen Resturlaubs-Erinnerung (employeeId → ISO-
+    // Zeitpunkt der Kenntnisnahme). Das Jahr im Zeitstempel entscheidet, ob
+    // die Erinnerung dieses Jahr schon quittiert wurde — im Folgejahr poppt
+    // sie dadurch automatisch wieder auf.
+    const VACATION_REMINDER_KEY = 'paraloxStunden.vacationReminder';
     // Symmetrisches Backup-Passwort für die Verschlüsselung der automatischen
     // Backup-Anhänge (AES-GCM 256, PBKDF2). Wird vom Admin in den Settings
     // gesetzt und gerätelokal gehalten — nicht im JSON-Backup, sonst hätte
@@ -372,6 +377,31 @@
         else delete map[String(employeeId)];
         localStorage.setItem(DSGVO_ACCEPTED_KEY, JSON.stringify(map));
     }
+    /* Resturlaubs-Erinnerung pro Mitarbeiter (employeeId → ISO-Zeitpunkt der
+     * Kenntnisnahme). Gleiche Bauart wie die DSGVO-Map, aber jahresbezogen
+     * ausgewertet: quittiert ein Mitarbeiter im April 2027, gilt das nur für
+     * 2027 — 2028 muss er erneut bestätigen. */
+    function _readVacationMap() {
+        try {
+            const raw = localStorage.getItem(VACATION_REMINDER_KEY);
+            if (!raw) return {};
+            const obj = JSON.parse(raw);
+            if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+            return obj;
+        } catch { return {}; }
+    }
+    function getVacationReminderAck(employeeId) {
+        if (employeeId == null) return null;
+        const v = _readVacationMap()[String(employeeId)];
+        return typeof v === 'string' ? v : null;
+    }
+    function setVacationReminderAck(employeeId, iso) {
+        if (employeeId == null) return;
+        const map = _readVacationMap();
+        if (iso) map[String(employeeId)] = iso;
+        else delete map[String(employeeId)];
+        localStorage.setItem(VACATION_REMINDER_KEY, JSON.stringify(map));
+    }
     function getBackupPassword() {
         return localStorage.getItem(BACKUP_PASSWORD_KEY) || null;
     }
@@ -411,6 +441,7 @@
         getLastBackupDate, setLastBackupDate,
         getLastMonthlyArchive, setLastMonthlyArchive,
         getDsgvoAccepted, setDsgvoAccepted,
+        getVacationReminderAck, setVacationReminderAck,
         getBackupPassword, setBackupPassword,
         getRunningShift, setRunningShift, clearRunningShift,
         nextId,

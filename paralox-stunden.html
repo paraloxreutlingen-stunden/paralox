@@ -692,6 +692,20 @@ tr.editing td {
 .modal-box.dsgvo-consent #dsgvoNotice p { margin: 0 0 .75rem; }
 .modal-box.dsgvo-consent #dsgvoNotice p:last-child { margin-bottom: 0; }
 
+/* Resturlaubs-Erinnerung: gleiche Optik wie der DSGVO-Hinweis, nur schmaler —
+   der Text ist kurz und soll auf dem Tablet nicht auseinandergezogen wirken. */
+.modal-box.vacation-reminder {
+    max-width: 520px;
+}
+.modal-box.vacation-reminder #vacationReminderText {
+    font-size: .95rem;
+    line-height: 1.55;
+    color: var(--muted);
+}
+.modal-box.vacation-reminder #vacationReminderText p { margin: 0 0 .75rem; }
+.modal-box.vacation-reminder #vacationReminderText p:last-child { margin-bottom: 0; }
+.modal-box.vacation-reminder #vacationReminderText strong { color: var(--text); }
+
 /* Pinnwand (Admin-Tab): Textarea etwas höher */
 #pinText {
     min-height: 160px;
@@ -1212,6 +1226,20 @@ tr.editing td {
     </div>
 </div>
 
+<!-- Jährliche Resturlaubs-Erinnerung: erscheint ab dem 30. März bis Ende Juni
+     einmal pro Mitarbeiter und Jahr und muss aktiv als gelesen bestätigt
+     werden. Die Bestätigung liegt in paraloxStunden.vacationReminder; im
+     Folgejahr poppt der Hinweis automatisch wieder auf. -->
+<div class="modal hidden" id="vacationReminderModal">
+    <div class="modal-box vacation-reminder">
+        <h3>🏖️ Erinnerung: Resturlaub</h3>
+        <div id="vacationReminderText"></div>
+        <div class="actions">
+            <button class="btn primary" id="vacationReminderBtn" type="button">Gelesen und verstanden</button>
+        </div>
+    </div>
+</div>
+
 <div class="toast-wrap" id="toasts"></div>
 
 <!-- Externe Libraries für Export -->
@@ -1385,6 +1413,11 @@ window.ParaloxConfig = {
     // damit ein importiertes Backup auf einem neuen Gerät erneut die
     // Zustimmung verlangt.
     const DSGVO_ACCEPTED_KEY = 'paraloxStunden.dsgvoAccepted';
+    // Bestätigung der jährlichen Resturlaubs-Erinnerung (employeeId → ISO-
+    // Zeitpunkt der Kenntnisnahme). Das Jahr im Zeitstempel entscheidet, ob
+    // die Erinnerung dieses Jahr schon quittiert wurde — im Folgejahr poppt
+    // sie dadurch automatisch wieder auf.
+    const VACATION_REMINDER_KEY = 'paraloxStunden.vacationReminder';
     // Symmetrisches Backup-Passwort für die Verschlüsselung der automatischen
     // Backup-Anhänge (AES-GCM 256, PBKDF2). Wird vom Admin in den Settings
     // gesetzt und gerätelokal gehalten — nicht im JSON-Backup, sonst hätte
@@ -1742,6 +1775,31 @@ window.ParaloxConfig = {
         else delete map[String(employeeId)];
         localStorage.setItem(DSGVO_ACCEPTED_KEY, JSON.stringify(map));
     }
+    /* Resturlaubs-Erinnerung pro Mitarbeiter (employeeId → ISO-Zeitpunkt der
+     * Kenntnisnahme). Gleiche Bauart wie die DSGVO-Map, aber jahresbezogen
+     * ausgewertet: quittiert ein Mitarbeiter im April 2027, gilt das nur für
+     * 2027 — 2028 muss er erneut bestätigen. */
+    function _readVacationMap() {
+        try {
+            const raw = localStorage.getItem(VACATION_REMINDER_KEY);
+            if (!raw) return {};
+            const obj = JSON.parse(raw);
+            if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+            return obj;
+        } catch { return {}; }
+    }
+    function getVacationReminderAck(employeeId) {
+        if (employeeId == null) return null;
+        const v = _readVacationMap()[String(employeeId)];
+        return typeof v === 'string' ? v : null;
+    }
+    function setVacationReminderAck(employeeId, iso) {
+        if (employeeId == null) return;
+        const map = _readVacationMap();
+        if (iso) map[String(employeeId)] = iso;
+        else delete map[String(employeeId)];
+        localStorage.setItem(VACATION_REMINDER_KEY, JSON.stringify(map));
+    }
     function getBackupPassword() {
         return localStorage.getItem(BACKUP_PASSWORD_KEY) || null;
     }
@@ -1781,6 +1839,7 @@ window.ParaloxConfig = {
         getLastBackupDate, setLastBackupDate,
         getLastMonthlyArchive, setLastMonthlyArchive,
         getDsgvoAccepted, setDsgvoAccepted,
+        getVacationReminderAck, setVacationReminderAck,
         getBackupPassword, setBackupPassword,
         getRunningShift, setRunningShift, clearRunningShift,
         nextId,
@@ -2432,18 +2491,60 @@ window.ParaloxConfig = {
      * andere Mitarbeiter. Inhalt wird dynamisch passend zu den aktiven
      * Sicherungen befüllt. */
     function maybeShowDsgvoConsent() {
-        if (!state.user) return;
+        if (!state.user) return false;
         const modal = $('#dsgvoConsentModal');
-        if (!modal) return;
+        if (!modal) return false;
         if (window.ParaloxStorage.getDsgvoAccepted(state.user.id)) {
             modal.classList.add('hidden');
-            return;
+            return false;
         }
         renderDsgvoNotice();
         // Bestätigungs-Modus: nur "Verstanden, weiter" sichtbar.
         $('#dsgvoConsentBtn').classList.remove('hidden');
         $('#dsgvoCloseBtn').classList.add('hidden');
         modal.classList.remove('hidden');
+        return true;
+    }
+
+    /* Jährliche Resturlaubs-Erinnerung.
+     *
+     * Fenster: ab dem 30. März bis zum 30. Juni desselben Jahres. Bewusst ein
+     * Zeitraum statt genau des 30. März — wer an dem Tag nicht arbeitet, würde
+     * die Erinnerung sonst nie zu sehen bekommen. Gezeigt wird sie trotzdem nur
+     * EINMAL pro Mitarbeiter und Jahr: der erste Login ab dem 30. März.
+     *
+     * Gilt für JEDEN eingeloggten User — auch Buchhaltung und Admins. Die
+     * Buchhaltungs-Rolle ist keine reine Fremdrolle: diese Leute arbeiten selbst
+     * mit und erfassen eigene Schichten, haben also ebenso Urlaubsanspruch. */
+    const VACATION_REMINDER_FROM  = '03-30';
+    const VACATION_REMINDER_UNTIL = '06-30';
+
+    function vacationReminderDue() {
+        if (!state.user) return false;
+        const today = todayISO();               // YYYY-MM-DD
+        const year = today.slice(0, 4);
+        const monthDay = today.slice(5);
+        if (monthDay < VACATION_REMINDER_FROM || monthDay > VACATION_REMINDER_UNTIL) return false;
+        // Quittierung zählt nur für das Jahr, in dem sie erfolgt ist.
+        const ack = window.ParaloxStorage.getVacationReminderAck(state.user.id);
+        return !(ack && ack.slice(0, 4) === year);
+    }
+
+    function maybeShowVacationReminder() {
+        const modal = $('#vacationReminderModal');
+        if (!modal) return false;
+        if (!vacationReminderDue()) {
+            modal.classList.add('hidden');
+            return false;
+        }
+        const year = todayISO().slice(0, 4);
+        $('#vacationReminderText').innerHTML =
+            `<p>Hallo ${escapeHtml(state.user.name)},</p>` +
+            `<p>bitte denk daran, deine eventuell noch bestehenden <strong>Urlaubstage bis spätestens 30. Juni ${year}</strong> zu nehmen.</p>` +
+            '<p>Nicht genommener Resturlaub <strong>verfällt</strong> danach.</p>' +
+            '<p>Bitte sprich deine Urlaubsplanung rechtzeitig mit der Betriebsleitung ab.</p>';
+        modal.classList.remove('hidden');
+        return true;
     }
 
     /* Read-only-Variante: zeigt den aktuellen Datenschutz-Hinweis-Text,
@@ -2588,7 +2689,10 @@ window.ParaloxConfig = {
         // DSGVO-Pflicht-Popup für diesen Mitarbeiter, falls noch nicht
         // bestätigt. Ohne Bestätigung ist die App zwar geöffnet, aber das
         // Modal liegt darüber und blockiert die Bedienung.
-        maybeShowDsgvoConsent();
+        // Beide Pflicht-Modals würden sich überlagern — deshalb kommt die
+        // Resturlaubs-Erinnerung erst, wenn kein DSGVO-Consent offen ist
+        // (sonst zeigt sie der DSGVO-Button nach seiner Bestätigung).
+        if (!maybeShowDsgvoConsent()) maybeShowVacationReminder();
     }
 
     /* Stellt das "Neue Schicht"-Formular auf "Beenden"-Modus um, falls der
@@ -2710,7 +2814,20 @@ window.ParaloxConfig = {
             window.ParaloxStorage.setDsgvoAccepted(state.user.id, new Date().toISOString());
         }
         $('#dsgvoConsentModal').classList.add('hidden');
+        // Erst jetzt ist die Sicht frei für die Resturlaubs-Erinnerung.
+        maybeShowVacationReminder();
     });
+
+    /* "Gelesen und verstanden" — Kenntnisnahme für dieses Jahr festhalten.
+     * Der Zeitstempel ist zugleich der Nachweis, wann der Mitarbeiter auf den
+     * Verfall hingewiesen wurde. */
+    $('#vacationReminderBtn')?.addEventListener('click', () => {
+        if (state.user) {
+            window.ParaloxStorage.setVacationReminderAck(state.user.id, new Date().toISOString());
+        }
+        $('#vacationReminderModal').classList.add('hidden');
+    });
+
     // Read-only "Schließen": setzt nichts, blendet das Modal nur weg.
     $('#dsgvoCloseBtn')?.addEventListener('click', () => {
         $('#dsgvoConsentModal').classList.add('hidden');

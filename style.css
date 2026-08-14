@@ -682,6 +682,20 @@ tr.editing td {
 .modal-box.dsgvo-consent #dsgvoNotice p { margin: 0 0 .75rem; }
 .modal-box.dsgvo-consent #dsgvoNotice p:last-child { margin-bottom: 0; }
 
+/* Resturlaubs-Erinnerung: gleiche Optik wie der DSGVO-Hinweis, nur schmaler —
+   der Text ist kurz und soll auf dem Tablet nicht auseinandergezogen wirken. */
+.modal-box.vacation-reminder {
+    max-width: 520px;
+}
+.modal-box.vacation-reminder #vacationReminderText {
+    font-size: .95rem;
+    line-height: 1.55;
+    color: var(--muted);
+}
+.modal-box.vacation-reminder #vacationReminderText p { margin: 0 0 .75rem; }
+.modal-box.vacation-reminder #vacationReminderText p:last-child { margin-bottom: 0; }
+.modal-box.vacation-reminder #vacationReminderText strong { color: var(--text); }
+
 /* Pinnwand (Admin-Tab): Textarea etwas höher */
 #pinText {
     min-height: 160px;
