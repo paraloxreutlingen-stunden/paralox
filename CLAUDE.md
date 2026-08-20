@@ -63,11 +63,12 @@ Inlinet `style.css`, `config.js`, `crypto.js`, `storage.js`, `app.js` in `index.
 | `paraloxStunden.dsgvoAccepted` | Map `{ employeeId: ISO }` mit Consent-Zeitpunkten |
 | `paraloxStunden.backupPassword` | Backup-Verschlüsselungs-Passwort (gerätelokal!) |
 | `paraloxStunden.runningShifts` | Map laufender Schichten pro Mitarbeiter |
+| `paraloxStunden.shiftDrafts` | Map halbfertiger Formular-Eingaben pro Mitarbeiter — damit eine angefangene Schicht den Auto-Logout übersteht. **Keine** erfasste Schicht: taucht in keiner Auswertung, keinem Export und keinem Backup auf, wird beim Speichern/Starten verworfen |
 | `paraloxStunden.vacationReminder` | Map `{ employeeId: ISO }` — Kenntnisnahme der jährlichen Resturlaubs-Erinnerung (Jahr im Zeitstempel entscheidet) |
 
 ## Tests
 
-Playwright-Tests im Root, mit `node test-*.js` einzeln ausführbar. Decken ab: Tablet-Login-Layout, Tabs pro Rolle, RV-Auszahlung, Local-Mode, Tagessicherung, Monatsabschluss-Archiv, PWA-Setup, DSGVO-Dynamik, 90-Tage-Buchhaltungs-Limit, Running-Shift-Workflow, Resturlaubs-Erinnerung (`test-urlaub-erinnerung.js`: fälscht die Systemzeit der Seite per `addInitScript`, damit der Test ganzjährig läuft), Rechnungs-Stichtag (`test-calc-cutoff.js`: ab `CALC_V2_FROM_MONTH` = 2026-08 wird jeder Schicht-Betrag EINMAL auf Cent gerundet und alle Summen daraus gebildet — jede Schicht zeigt überall denselben Betrag, Verdienst = Brutto = Zeilensumme; frühere Monate rechnen unverändert wie zuvor).
+Playwright-Tests im Root, mit `node test-*.js` einzeln ausführbar. Decken ab: Tablet-Login-Layout, Tabs pro Rolle, RV-Auszahlung, Local-Mode, Tagessicherung, Monatsabschluss-Archiv, PWA-Setup, DSGVO-Dynamik, 90-Tage-Buchhaltungs-Limit, Running-Shift-Workflow, Auto-Logout (`test-auto-logout.js`: fälscht die Uhr per `page.clock`, damit die Frist nicht real abgewartet werden muss; liest `IDLE_TIMEOUT_MS` aus `app.js`, statt die Zahl zu duplizieren), Formular-Entwurf (`test-shift-draft.js`), Resturlaubs-Erinnerung (`test-urlaub-erinnerung.js`: fälscht die Systemzeit der Seite per `addInitScript`, damit der Test ganzjährig läuft), Rechnungs-Stichtag (`test-calc-cutoff.js`: ab `CALC_V2_FROM_MONTH` = 2026-08 wird jeder Schicht-Betrag EINMAL auf Cent gerundet und alle Summen daraus gebildet — jede Schicht zeigt überall denselben Betrag, Verdienst = Brutto = Zeilensumme; frühere Monate rechnen unverändert wie zuvor).
 
 Ausführung braucht `playwright-core` (`npm i --no-save playwright-core`, lokales Chrome wird genutzt) und einen statischen Server auf `:8080`, der `paralox-stunden.html` ausliefert.
 

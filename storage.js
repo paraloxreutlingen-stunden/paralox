@@ -32,6 +32,14 @@
     // Mitarbeiter zur Zeit; muss erst beendet werden, bevor eine neue startet.
     const RUNNING_SHIFTS_KEY = 'paraloxStunden.runningShifts';
 
+    // Halbfertige Eingaben im "Neue Schicht"-Formular. Map
+    // { [employeeId]: { date, startTime, endTime, room, secondRoom, isDouble,
+    // note, savedAt } }. Rein gerätelokal und KEINE erfasste Schicht — nur ein
+    // Entwurf, damit eine angefangene Eingabe den Auto-Logout übersteht. Wird
+    // verworfen, sobald die Schicht gespeichert oder als laufende Schicht
+    // gestartet wurde.
+    const SHIFT_DRAFTS_KEY = 'paraloxStunden.shiftDrafts';
+
     /* WICHTIG: Diese Defaults landen im öffentlichen Quellcode auf GitHub.
      * Hier KEINE business-spezifischen Werte (Stundenlöhne, Mitarbeiter-
      * Namen, Adresse, Räume) hardcoden — das wären sonst Daten-Lecks.
@@ -427,6 +435,24 @@
         setRunningShift(employeeId, null);
     }
 
+    function getShiftDrafts() {
+        try { return JSON.parse(localStorage.getItem(SHIFT_DRAFTS_KEY) || '{}'); }
+        catch { return {}; }
+    }
+    function getShiftDraft(employeeId) {
+        const map = getShiftDrafts();
+        return map[String(employeeId)] || null;
+    }
+    function setShiftDraft(employeeId, data) {
+        const map = getShiftDrafts();
+        if (!data) delete map[String(employeeId)];
+        else map[String(employeeId)] = data;
+        localStorage.setItem(SHIFT_DRAFTS_KEY, JSON.stringify(map));
+    }
+    function clearShiftDraft(employeeId) {
+        setShiftDraft(employeeId, null);
+    }
+
     function nextId(items) {
         let max = 0;
         items.forEach(i => { if (+i.id > max) max = +i.id; });
@@ -444,6 +470,7 @@
         getVacationReminderAck, setVacationReminderAck,
         getBackupPassword, setBackupPassword,
         getRunningShift, setRunningShift, clearRunningShift,
+        getShiftDraft, setShiftDraft, clearShiftDraft,
         nextId,
     };
 })();

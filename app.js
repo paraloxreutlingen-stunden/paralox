@@ -22,7 +22,11 @@
     const LIMIT_YEAR_WARN  = 5736;
     const LIMIT_MONTH      = 603;
     const LIMIT_MONTH_WARN = 550;
-    const IDLE_TIMEOUT_MS  = 8 * 60 * 1000; // 8 Minuten Auto-Logout
+    /* Auto-Logout nach Inaktivität. Das Tablet steht im Betrieb offen herum —
+     * eine kurze Frist verhindert, dass der nächste Mitarbeiter die Sitzung
+     * seines Vorgängers vorfindet. Jede Maus-, Tasten-, Touch- oder Scroll-
+     * Aktion setzt die Frist zurück, sie greift also nur bei echtem Stillstand. */
+    const IDLE_TIMEOUT_MS  = 90 * 1000; // 90 Sekunden Auto-Logout
     const MAX_END_MIN_NONADMIN = 24 * 60 + 30; // 00:30 am Folgetag (Schichtende darf nicht später liegen)
     const MONTH_NAMES = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
     /* Buchhaltungs-Konten dürfen in der Gesamt-Stundenliste und den Exporten
@@ -423,11 +427,22 @@
     // ---------- Auto-Logout ----------
 
     let idleTimer = null;
+
+    /* Beschreibt IDLE_TIMEOUT_MS in Worten für den Abmelde-Hinweis. Wird aus der
+     * Konstante abgeleitet, damit Text und tatsächliche Frist nicht auseinander-
+     * laufen, wenn der Wert später angepasst wird. */
+    function idleTimeoutLabel() {
+        const sec = Math.round(IDLE_TIMEOUT_MS / 1000);
+        if (sec % 60 !== 0) return `${sec} Sekunden`;
+        const min = sec / 60;
+        return min === 1 ? 'einer Minute' : `${min} Minuten`;
+    }
+
     function resetIdleTimer() {
         if (!state.user) return;
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
-            toast('Automatisch abgemeldet nach 8 Minuten Inaktivität.', 'info');
+            toast(`Automatisch abgemeldet nach ${idleTimeoutLabel()} Inaktivität.`, 'info');
             setTimeout(doLogout, 400);
         }, IDLE_TIMEOUT_MS);
     }
@@ -831,6 +846,11 @@
 
         refreshShiftEmpSelect();
         renderShiftFormMode();
+        // Nach renderShiftFormMode(), damit eine laufende Schicht Vorrang behält
+        // und ihre Felder nicht vom Entwurf überschrieben werden.
+        if (restoreShiftDraft()) {
+            toast('Angefangene Eingabe wiederhergestellt.', 'info');
+        }
 
         renderPreview();
         buildTabs();
@@ -923,6 +943,83 @@
         renderPreview();
     }
 
+    /* ---------- Formular-Entwurf ----------
+     *
+     * Mitarbeiter tragen den Beginn oft zu Schichtbeginn ein und die Endezeit
+     * erst Stunden später. Dazwischen greift der Auto-Logout und lädt die Seite
+     * neu — ohne Sicherung wäre die angefangene Eingabe weg. Der Entwurf wird
+     * deshalb bei jeder Änderung gerätelokal abgelegt und beim nächsten Login
+     * zurückgeholt. Er ist ausdrücklich KEINE erfasste Schicht: er taucht in
+     * keiner Auswertung, keinem Export und keinem Backup auf.
+     *
+     * Der saubere Weg für diesen Ablauf bleibt "Schicht starten" — der Entwurf
+     * ist nur das Netz für alle, die stattdessen direkt ins Formular tippen. */
+
+    /* Liest den aktuellen Formularstand. Der Entwurf gehört immer dem
+     * eingeloggten User, nicht dem im Admin-Dropdown gewählten Mitarbeiter:
+     * sonst bekäme beim nächsten Login der Falsche die Eingabe vorgesetzt. */
+    function currentShiftDraft() {
+        return {
+            date: $('#sfDate').value,
+            startTime: $('#sfStart').value,
+            endTime: $('#sfEnd').value,
+            room: $('#sfRoom').value,
+            isDouble: $('#sfDouble').checked,
+            secondRoom: $('#sfRoom2').value,
+            note: $('#sfNote').value,
+            savedAt: new Date().toISOString(),
+        };
+    }
+
+    /* Ein Entwurf lohnt sich nur, wenn wirklich etwas eingetippt wurde. Das
+     * Datum zählt dabei nicht: es steht nach dem Login ohnehin auf heute und
+     * würde sonst jeden leeren Formularstand als Entwurf sichern. */
+    function draftHasContent(d) {
+        return !!(d.startTime || d.endTime || d.room || d.note || d.isDouble);
+    }
+
+    function saveShiftDraft() {
+        if (!state.user) return;
+        // Im Beenden-Modus führt die laufende Schicht — die ist bereits
+        // dauerhaft gespeichert und braucht keinen zusätzlichen Entwurf.
+        if (window.ParaloxStorage.getRunningShift(state.user.id)) return;
+        const d = currentShiftDraft();
+        window.ParaloxStorage.setShiftDraft(state.user.id, draftHasContent(d) ? d : null);
+    }
+
+    function dropShiftDraft() {
+        if (!state.user) return;
+        window.ParaloxStorage.clearShiftDraft(state.user.id);
+    }
+
+    /* Holt einen gesicherten Entwurf ins Formular zurück. Läuft nur im
+     * Normalmodus — bei laufender Schicht hat renderShiftFormMode() die Felder
+     * bereits aus der offenen Schicht belegt und darf nicht überschrieben
+     * werden. Ein Entwurf von einem früheren Tag wird verworfen: die Schicht
+     * von gestern nachträglich zu speichern wäre fast immer falsch, und
+     * Nicht-Admins dürfen ohnehin nur den heutigen Tag erfassen. */
+    function restoreShiftDraft() {
+        if (!state.user) return false;
+        if (window.ParaloxStorage.getRunningShift(state.user.id)) return false;
+        const d = window.ParaloxStorage.getShiftDraft(state.user.id);
+        if (!d) return false;
+        if (d.date && d.date !== todayISO()) { dropShiftDraft(); return false; }
+
+        if (d.date) $('#sfDate').value = d.date;
+        $('#sfStart').value = d.startTime || '';
+        $('#sfEnd').value = d.endTime || '';
+        $('#sfNote').value = d.note || '';
+        $('#sfDouble').checked = !!d.isDouble;
+        // Erst den 1. Raum setzen, dann die Auswahllisten auffrischen — sonst
+        // filtert refreshShiftRoomSelects() den 2. Raum gegen einen leeren
+        // ersten. Gleiche Reihenfolge wie im Beenden-Modus.
+        if (d.room) $('#sfRoom').value = d.room;
+        refreshShiftRoomSelects();
+        if (d.isDouble && d.secondRoom) $('#sfRoom2').value = d.secondRoom;
+        renderPreview();
+        return true;
+    }
+
     /* Befüllt das Mitarbeiter-Dropdown im "Neue Schicht"-Formular für Admins.
      * Muss nach JEDER Änderung an der Mitarbeiter-Liste neu laufen — nicht
      * nur einmal beim Login —, sonst fehlen frisch angelegte Mitarbeiter im
@@ -1001,6 +1098,13 @@
     $('#sfRoom').addEventListener('change',  () => { if ($('#sfDouble').checked) refreshShiftRoomSelects(); });
     $('#sfRoom2').addEventListener('change', () => { refreshShiftRoomSelects(); });
 
+    // Jede Eingabe sichert den Entwurf — nur so überlebt eine halbfertige
+    // Schicht den Auto-Logout, der genau in diese Lücke fällt.
+    ['sfDate','sfStart','sfEnd','sfRoom','sfRoom2','sfDouble','sfNote'].forEach(id => {
+        $('#' + id).addEventListener('change', saveShiftDraft);
+        $('#' + id).addEventListener('input', saveShiftDraft);
+    });
+
     $('#shiftForm').addEventListener('submit', (ev) => {
         ev.preventDefault();
         // Wenn der eingeloggte User eine offene Schicht hat, ist das Form
@@ -1060,6 +1164,8 @@
             createdAt: new Date().toISOString(),
         });
         saveData();
+        // Schicht ist erfasst — der Entwurf hat seinen Zweck erfüllt.
+        dropShiftDraft();
         const savedForOther = isAdmin() && targetEmpId !== state.user.id;
         toast(savedForOther
             ? `Schicht für ${empName(targetEmpId)} gespeichert`
@@ -1118,6 +1224,9 @@
             }
         }
         window.ParaloxStorage.setRunningShift(state.user.id, data);
+        // Ab jetzt führt die laufende Schicht; ein Entwurf daneben wäre
+        // doppelt gehalten und könnte beim Beenden dazwischenfunken.
+        dropShiftDraft();
         toast('Schicht gestartet — viel Erfolg!', 'success');
         renderShiftFormMode();
     });
@@ -1172,6 +1281,7 @@
         });
         saveData();
         window.ParaloxStorage.clearRunningShift(state.user.id);
+        dropShiftDraft();
         toast('Schicht beendet und gespeichert', 'success');
         // Form leeren + zurück in den Normal-Modus
         $('#sfDate').value = todayISO();
