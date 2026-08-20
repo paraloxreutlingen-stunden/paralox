@@ -34,8 +34,8 @@ async function newPage(browser) {
     return page;
 }
 
-async function loginAsOwner1(page) {
-    // "Owner1" gibt es im Default-Seed nicht mehr — der einzige initiale
+async function loginAsAdmin(page) {
+    // "Eigentümer 1" gibt es im Default-Seed nicht mehr — der einzige initiale
     // User ist "Admin" mit Passwort "paralox".
     const alreadyIn = await page.evaluate(() =>
         document.getElementById('view-login')?.classList.contains('hidden'));
@@ -84,7 +84,7 @@ async function fillForm(page, vals) {
         const page = await newPage(browser);
         await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
 
         // Initial: Form ist im Normalmodus, Banner versteckt, Start-Button sichtbar
         let st = await page.evaluate(() => ({
@@ -105,7 +105,7 @@ async function fillForm(page, vals) {
         // localStorage hat die offene Schicht
         const open = await page.evaluate(() =>
             JSON.parse(localStorage.getItem('paraloxStunden.runningShifts') || '{}'));
-        check('localStorage: offene Schicht für Owner1 (id=1) gespeichert',
+        check('localStorage: offene Schicht für Eigentümer 1 (id=1) gespeichert',
             open['1'] && open['1'].startTime === '10:00' && open['1'].room === 'R1',
             JSON.stringify(open));
 
@@ -131,7 +131,7 @@ async function fillForm(page, vals) {
         // Reload — offene Schicht muss erhalten bleiben, Banner muss wieder erscheinen
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
 
         const stillOpen = await page.evaluate(() =>
             JSON.parse(localStorage.getItem('paraloxStunden.runningShifts') || '{}'));
@@ -174,7 +174,7 @@ async function fillForm(page, vals) {
         const page = await newPage(browser);
         await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
 
         await fillForm(page, { start: '11:00', room: 'R1' });
         await page.click('#sfStartBtn');
@@ -202,7 +202,7 @@ async function fillForm(page, vals) {
         const page = await newPage(browser);
         await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
 
         await fillForm(page, { start: '09:00', room: 'R1' });
         await page.click('#sfStartBtn');

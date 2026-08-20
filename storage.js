@@ -156,12 +156,43 @@
         return todayISODate().slice(0, 7);
     }
 
+    /* Migration der Eigentümer-Schlüssel. Früher hießen sie nach den beiden
+     * Inhabern; da der Quellcode öffentlich auf GitHub liegt, heißen sie jetzt
+     * neutral owner1/owner2. Die Zuordnung bleibt exakt erhalten (erster
+     * Inhaber = owner1, zweiter = owner2) — an Anteilen und Beträgen ändert
+     * sich dadurch nichts.
+     *
+     * Idempotent: sind die neuen Schlüssel schon da, gewinnen sie und die alten
+     * werden nur entfernt. Läuft über normalize() auch beim Einspielen alter
+     * Backups, weil replace() denselben Weg nimmt — bestehende .enc-Dateien
+     * bleiben damit lesbar. */
+    function migrateOwnerKeys(obj) {
+        if (!obj || typeof obj !== 'object') return obj;
+        if (obj.owner1 === undefined && obj.owner1   !== undefined) obj.owner1 = obj.owner1;
+        if (obj.owner2 === undefined && obj.owner2 !== undefined) obj.owner2 = obj.owner2;
+        delete obj.owner1;
+        delete obj.owner2;
+        return obj;
+    }
+
     // Stellt sicher dass alle Felder vorhanden sind, auch bei alten Datensätzen
     function normalize(data) {
         if (!data || typeof data !== 'object') return seed();
         data.employees = Array.isArray(data.employees) ? data.employees : [];
         data.shifts    = Array.isArray(data.shifts) ? data.shifts : [];
-        data.settings  = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
+        // Eigentümer-Schlüssel migrieren, BEVOR mit DEFAULT_SETTINGS gemerged
+        // wird: sonst überschreibt ein gespeichertes labels/doubleSplit mit
+        // alten Schlüsseln die Defaults komplett und beide Schreibweisen
+        // stünden anschließend nebeneinander.
+        const rawSettings = data.settings || {};
+        migrateOwnerKeys(rawSettings.labels);
+        migrateOwnerKeys(rawSettings.doubleSplit);
+        Object.values(rawSettings.rooms || {}).forEach(migrateOwnerKeys);
+        data.settings  = Object.assign({}, DEFAULT_SETTINGS, rawSettings);
+        // Frische Kopie, damit ein späteres Schreiben nicht das gemeinsame
+        // DEFAULT_SETTINGS-Objekt des Moduls verändert.
+        data.settings.doubleSplit = Object.assign(
+            {}, DEFAULT_SETTINGS.doubleSplit, rawSettings.doubleSplit || {});
         // Räume NICHT mit Defaults mergen — sonst würden bei vorhandenen
         // echten Räumen die generischen Platzhalter R1/R2 zusätzlich
         // erscheinen. Defaults nur, wenn rooms ganz fehlt oder leer ist.
@@ -254,8 +285,16 @@
         });
         // Sicherstellen dass jeder Mitarbeiter ein assignedTo hat
         data.employees.forEach(e => {
+            // Migration der alten Eigentümer-Schlüssel (siehe migrateOwnerKeys).
+            if (e.assignedTo === 'owner1')        e.assignedTo = 'owner1';
+            else if (e.assignedTo === 'owner2') e.assignedTo = 'owner2';
+            // Frühere Fassungen leiteten ein fehlendes assignedTo aus dem
+            // Mitarbeiter-NAMEN ab. Das ist entfallen, weil dafür ein echter
+            // Personenname im Quellcode stehen müsste; bestehende Datensätze
+            // haben ihr assignedTo längst gesetzt, hier greift nur noch der
+            // Default für neu angelegte oder beschädigte Einträge.
             if (e.assignedTo !== 'owner1' && e.assignedTo !== 'owner2') {
-                e.assignedTo = (e.name && e.name.toLowerCase() === 'owner2') ? 'owner2' : 'owner1';
+                e.assignedTo = 'owner1';
             }
             if (typeof e.password !== 'string') e.password = 'paralox';
             // Migration: bestehende Mitarbeiter sind standardmäßig RV-pflichtig

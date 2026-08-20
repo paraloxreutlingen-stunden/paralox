@@ -2,7 +2,7 @@
  *  1. App lädt ohne JS-Fehler
  *  2. KEIN MSAL geladen, KEIN ParaloxDrive vorhanden
  *  3. OneDrive-UI (driveStatus, driveAlt) ist nicht sichtbar
- *  4. Login mit Owner1/PIN funktioniert
+ *  4. Login mit Eigentümer 1/PIN funktioniert
  *  5. Daten landen in localStorage
  *  6. Reload behält die Sitzung/Daten (lokale Persistenz)
  */
@@ -99,7 +99,7 @@ function check(label, cond, detail) {
     check('driveStatusWrap NICHT sichtbar', !ui.wrapVisible);
     check('driveAlt NICHT sichtbar', !ui.bannerVisible);
 
-    console.log('6) Login mit Owner1 (Initial-Passwort "paralox")');
+    console.log('6) Login mit Eigentümer 1 (Initial-Passwort "paralox")');
     // Login-Form muss sichtbar sein
     const loginVisible = await page.evaluate(() =>
         !document.getElementById('view-login').classList.contains('hidden'));
@@ -111,9 +111,9 @@ function check(label, cond, detail) {
         const sel = document.getElementById('loginName');
         const pin = document.getElementById('loginPassword');
         if (!sel || !pin) return { ok: false, reason: 'Form-Elemente fehlen' };
-        const owner1Opt = Array.from(sel.options).find(o => o.textContent === 'Admin');
-        if (!owner1Opt) return { ok: false, reason: 'Admin nicht im Select', options: Array.from(sel.options).map(o => o.textContent) };
-        sel.value = owner1Opt.value;
+        const adminOpt = Array.from(sel.options).find(o => o.textContent === 'Admin');
+        if (!adminOpt) return { ok: false, reason: 'Admin nicht im Select', options: Array.from(sel.options).map(o => o.textContent) };
+        sel.value = adminOpt.value;
         pin.value = 'paralox';
         document.getElementById('loginForm').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
         await new Promise(r => setTimeout(r, 500));

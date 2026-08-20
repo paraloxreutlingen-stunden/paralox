@@ -108,7 +108,7 @@ async function newPage(behavior = 'success', primeRecipient = RECIPIENT) {
 }
 
 // Der Seed-Admin heißt generisch "Admin" — echte Namen stehen nicht im Repo.
-async function loginAsOwner1(page) {
+async function loginAsAdmin(page) {
     await page.evaluate(() => {
         const sel = document.getElementById('loginName');
         const opt = Array.from(sel.options).find(o => o.textContent === 'Admin');
@@ -126,7 +126,7 @@ async function logoutAndLoginAgain(page) {
     // doLogout ruft location.reload — wir warten auf Reload und Mocks neu
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(500);
-    await loginAsOwner1(page);
+    await loginAsAdmin(page);
 }
 
 async function saveShift(page, date, start, end) {
@@ -151,7 +151,7 @@ async function saveShift(page, date, start, end) {
     console.log('\n=== Erster Login des Tages → Web Share wird aufgerufen ===');
     {
         const { browser, page } = await newPage('success');
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
 
         const calls = await page.evaluate(() => window.__getShareCalls());
         check('navigator.share wurde 1× aufgerufen', calls.length === 1,
@@ -187,7 +187,7 @@ async function saveShift(page, date, start, end) {
     console.log('\n=== Zweiter Login desselben Tages → kein erneuter Share ===');
     {
         const { browser, page } = await newPage('success');
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
         await logoutAndLoginAgain(page);
 
         const calls = await page.evaluate(() => window.__getShareCalls());
@@ -215,7 +215,7 @@ async function saveShift(page, date, start, end) {
         });
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
 
         const calls = await page.evaluate(() => window.__getShareCalls());
         const fileText = calls[0]?.fileText;
@@ -244,7 +244,7 @@ async function saveShift(page, date, start, end) {
     console.log('\n=== Share-Abort → marker bleibt leer; nächster Login triggert erneut ===');
     {
         const { browser, page } = await newPage('abort');
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
 
         const lastDate = await page.evaluate(() =>
             localStorage.getItem('paraloxStunden.lastBackup'));
@@ -277,7 +277,7 @@ async function saveShift(page, date, start, end) {
         });
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
 
         const calls = await page.evaluate(() => window.__getShareCalls());
         check('Kein Share-Aufruf wenn Tagessicherung aus',
@@ -290,7 +290,7 @@ async function saveShift(page, date, start, end) {
     console.log('\n=== "Jetzt sichern" erzwingt Share auch nach Auto-Backup ===');
     {
         const { browser, page } = await newPage('success');
-        await loginAsOwner1(page); // → trigger 1
+        await loginAsAdmin(page); // → trigger 1
         await page.evaluate(() => {
             Array.from(document.querySelectorAll('#tabs button'))
                 .find(b => b.dataset.tab === 'settings').click();

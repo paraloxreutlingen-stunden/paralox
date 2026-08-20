@@ -42,7 +42,7 @@ async function measure(viewport, withPinboard, label) {
             if (!raw) return;
             const data = JSON.parse(raw);
             data.pinboard = {
-                text: 'Bitte die Schichten am Sonntag bis 12 Uhr nachtragen — ich brauche die Liste für die Lohnabrechnung. Danke!\n\n— Owner1',
+                text: 'Bitte die Schichten am Sonntag bis 12 Uhr nachtragen — ich brauche die Liste für die Lohnabrechnung. Danke!\n\n— Eigentümer 1',
                 updatedAt: new Date().toISOString(),
                 updatedBy: 1,
             };

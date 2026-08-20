@@ -77,8 +77,8 @@ function previousMonthYYYYMM() {
     return `${y}-${m}`;
 }
 
-async function loginAsOwner1(page) {
-    // "Owner1" gibt es im Default-Seed nicht mehr — der einzige initiale
+async function loginAsAdmin(page) {
+    // "Eigentümer 1" gibt es im Default-Seed nicht mehr — der einzige initiale
     // User ist "Admin" mit Passwort "paralox".
     await page.evaluate(() => {
         const sel = document.getElementById('loginName');
@@ -114,7 +114,7 @@ async function loginAsOwner1(page) {
         }, prevMonth);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
         // sequentielle Share-Aufrufe → 2. wartet bis 1. fertig
         await page.waitForTimeout(1500);
 
@@ -191,7 +191,7 @@ async function loginAsOwner1(page) {
         }, prevMonth);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
         await page.waitForTimeout(1500);
 
         const calls = await page.evaluate(() => window.__getShareCalls());
@@ -212,7 +212,7 @@ async function loginAsOwner1(page) {
         await setupShareMock(page, 'success');
         await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
         await page.waitForTimeout(1500);
 
         const calls = await page.evaluate(() => window.__getShareCalls());
@@ -246,14 +246,14 @@ async function loginAsOwner1(page) {
         }, prevMonth);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
         await page.waitForTimeout(1500);
 
         // Logout + erneuter Login
         await page.evaluate(() => document.getElementById('btnLogout').click());
         await page.waitForLoadState('networkidle');
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
         await page.waitForTimeout(1500);
 
         const calls = await page.evaluate(() => window.__getShareCalls());
@@ -284,7 +284,7 @@ async function loginAsOwner1(page) {
         }, prevMonth);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(500);
-        await loginAsOwner1(page);
+        await loginAsAdmin(page);
         await page.waitForTimeout(1500);
 
         const calls = await page.evaluate(() => window.__getShareCalls());

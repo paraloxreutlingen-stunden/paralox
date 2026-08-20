@@ -81,7 +81,7 @@ Speichern. Bundle neu bauen mit `node build-bundle.js`. Die neue `paralox-stunde
 4. Mit dem gemeinsamen Microsoft-Konto einloggen, Berechtigung („Files.ReadWrite.AppFolder") bestätigen.
 5. Du wirst zurück zur App geschickt — der Status oben rechts wird zu **„✓ OneDrive"** und die Synchronisation läuft.
 
-Auf dem zweiten Gerät (z.B. Eigentümer 2s Tablet/Laptop): gleiche URL aufrufen, Banner antippen, mit demselben Microsoft-Konto einloggen — Daten werden automatisch synchronisiert.
+Auf dem zweiten Gerät (z.B. das Tablet/Laptop des zweiten Eigentümers): gleiche URL aufrufen, Banner antippen, mit demselben Microsoft-Konto einloggen — Daten werden automatisch synchronisiert.
 
 ---
 

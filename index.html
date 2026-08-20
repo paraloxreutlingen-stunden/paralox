@@ -184,7 +184,8 @@
                         <tr>
                             <th>Datum</th><th>Mitarbeiter</th><th>Beginn</th><th>Ende</th><th>Dauer</th>
                             <th>Räume</th><th>Typ</th><th>Verdienst</th>
-                            <th>Kosten Owner1</th><th>Kosten Owner2</th>
+                            <!-- Beschriftung kommt aus settings.labels, gesetzt in app.js -->
+                            <th id="thKostenOwner1">Kosten Eigentümer 1</th><th id="thKostenOwner2">Kosten Eigentümer 2</th>
                             <th>Notiz</th><th></th>
                         </tr>
                     </thead>
@@ -256,12 +257,12 @@
         <div class="card">
             <h2>Einstellungen</h2>
             <form id="settingsForm" class="grid">
-                <label>Eigentümer-Label 1 (für Räume mit Anteil „owner1")
+                <label>Eigentümer-Label 1 (für Räume mit Anteil „Eigentümer 1")
                     <input type="text" id="setLabelOwner1" autocomplete="off"
                         placeholder="z.B. Firma X GmbH">
                     <small class="hint">Wird in Listen, Minijob-PDF und im Mitarbeiter-Form angezeigt.</small>
                 </label>
-                <label>Eigentümer-Label 2 (für Räume mit Anteil „owner2")
+                <label>Eigentümer-Label 2 (für Räume mit Anteil „Eigentümer 2")
                     <input type="text" id="setLabelOwner2" autocomplete="off"
                         placeholder="z.B. Vorname Nachname">
                 </label>
@@ -310,7 +311,8 @@
             <h3>Räume &amp; Aufteilung</h3>
             <div class="table-wrap">
                 <table class="data" id="roomsTable">
-                    <thead><tr><th>Kürzel</th><th>Raum</th><th>Owner1</th><th>Owner2</th></tr></thead>
+                    <!-- Spaltenköpfe kommen aus settings.labels, gesetzt in app.js -->
+                    <thead><tr><th>Kürzel</th><th>Raum</th><th id="thRoomOwner1">Eigentümer 1</th><th id="thRoomOwner2">Eigentümer 2</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>

@@ -349,29 +349,29 @@
         const r1 = rooms[shift.room] || fallback;
         const factor = ABGABEN_PCT / 100;
 
-        let baseOwner1, baseOwner2;
+        let base1, base2;
         if (!shift.isDouble) {
-            baseOwner1   = amount * (r1.owner1   / 100);
-            baseOwner2 = amount * (r1.owner2 / 100);
+            base1 = amount * (r1.owner1 / 100);
+            base2 = amount * (r1.owner2 / 100);
         } else {
             const r2code = shift.secondRoom || 'WS';
             const r2 = rooms[r2code] || fallback;
-            baseOwner1   = amount * 0.5 * (r1.owner1   / 100) + amount * 0.5 * (r2.owner1   / 100);
-            baseOwner2 = amount * 0.5 * (r1.owner2 / 100) + amount * 0.5 * (r2.owner2 / 100);
+            base1 = amount * 0.5 * (r1.owner1 / 100) + amount * 0.5 * (r2.owner1 / 100);
+            base2 = amount * 0.5 * (r1.owner2 / 100) + amount * 0.5 * (r2.owner2 / 100);
         }
-        const sAbg = baseOwner1   * factor;
-        const bAbg = baseOwner2 * factor;
+        const abg1 = base1 * factor;
+        const abg2 = base2 * factor;
         return {
             total: amount,
             abgabenPct: ABGABEN_PCT,
-            owner1:   baseOwner1,
-            owner2: baseOwner2,
-            owner1Base:   baseOwner1,
-            owner2Base: baseOwner2,
-            owner1Abgaben:   sAbg,
-            owner2Abgaben: bAbg,
-            owner1Total:   baseOwner1   + sAbg,
-            owner2Total: baseOwner2 + bAbg,
+            owner1: base1,
+            owner2: base2,
+            owner1Base: base1,
+            owner2Base: base2,
+            owner1Abgaben: abg1,
+            owner2Abgaben: abg2,
+            owner1Total: base1 + abg1,
+            owner2Total: base2 + abg2,
         };
     }
 
@@ -651,7 +651,7 @@
     }
 
     /* DSGVO-Hinweis als Pflicht-Modal beim ersten Login JEDES Mitarbeiters.
-     * Marker pro User-ID — Bestätigung von Owner1 entlässt nicht automatisch
+     * Marker pro User-ID — die Bestätigung eines Nutzers entlässt nicht automatisch
      * andere Mitarbeiter. Inhalt wird dynamisch passend zu den aktiven
      * Sicherungen befüllt. */
     function maybeShowDsgvoConsent() {
@@ -1513,13 +1513,14 @@
 
     function adminSummaryHtml(count, minutes, amount, agg) {
         const pctStr = String(ABGABEN_PCT).replace('.', ',');
+        const o1 = owner1Label(), o2 = owner2Label();
         return summaryHtml(count, minutes, amount) +
-            `<div class="stat"><div class="label">Kosten Owner1</div><div class="value">${fmtEUR(agg.sBase)}</div></div>` +
-            `<div class="stat"><div class="label">Abgaben Owner1 (${pctStr}%)</div><div class="value">${fmtEUR(agg.sAbg)}</div></div>` +
-            `<div class="stat"><div class="label">Gesamt Owner1</div><div class="value">${fmtEUR(agg.sTotal)}</div></div>` +
-            `<div class="stat"><div class="label">Kosten Owner2</div><div class="value">${fmtEUR(agg.bBase)}</div></div>` +
-            `<div class="stat"><div class="label">Abgaben Owner2 (${pctStr}%)</div><div class="value">${fmtEUR(agg.bAbg)}</div></div>` +
-            `<div class="stat"><div class="label">Gesamt Owner2</div><div class="value">${fmtEUR(agg.bTotal)}</div></div>`;
+            `<div class="stat"><div class="label">Kosten ${escapeHtml(o1)}</div><div class="value">${fmtEUR(agg.sBase)}</div></div>` +
+            `<div class="stat"><div class="label">Abgaben ${escapeHtml(o1)} (${pctStr}%)</div><div class="value">${fmtEUR(agg.sAbg)}</div></div>` +
+            `<div class="stat"><div class="label">Gesamt ${escapeHtml(o1)}</div><div class="value">${fmtEUR(agg.sTotal)}</div></div>` +
+            `<div class="stat"><div class="label">Kosten ${escapeHtml(o2)}</div><div class="value">${fmtEUR(agg.bBase)}</div></div>` +
+            `<div class="stat"><div class="label">Abgaben ${escapeHtml(o2)} (${pctStr}%)</div><div class="value">${fmtEUR(agg.bAbg)}</div></div>` +
+            `<div class="stat"><div class="label">Gesamt ${escapeHtml(o2)}</div><div class="value">${fmtEUR(agg.bTotal)}</div></div>`;
     }
 
     $('#mineYear').addEventListener('change', renderMine);
@@ -1577,6 +1578,24 @@
             ? (labels.owner2 || 'Eigentümer 2')
             : (labels.owner1 || 'Eigentümer 1');
     }
+    // Kurzformen für die beiden Eigentümer — überall dort, wo früher die
+    // Vornamen fest in Überschriften und Exportspalten standen.
+    const owner1Label = () => ownerLabel('owner1');
+    const owner2Label = () => ownerLabel('owner2');
+
+    /* Setzt die Spaltenköpfe, die im HTML nur generisch vorbelegt sind, auf die
+     * konfigurierten Eigentümer-Labels. Muss bei jedem Rendern laufen, nicht
+     * einmalig beim Login — sonst zeigen die Tabellen nach einer Label-Änderung
+     * in den Einstellungen bis zum nächsten Login noch die alte Beschriftung. */
+    function applyOwnerLabelsToHeaders() {
+        const o1 = owner1Label(), o2 = owner2Label();
+        const set = (id, text) => { const el = $('#' + id); if (el) el.textContent = text; };
+        set('thKostenOwner1', `Kosten ${o1}`);
+        set('thKostenOwner2', `Kosten ${o2}`);
+        set('thRoomOwner1', o1);
+        set('thRoomOwner2', o2);
+    }
+
     function empAssignment(id) {
         const e = employees().find(x => x.id === id);
         return (e && e.assignedTo) || 'owner1';
@@ -1671,9 +1690,10 @@
     }
 
     /* Kostenaufteilung einer Schicht für Anzeige UND Summierung. Ab dem Stichtag
-     * werden Betrag und Owner1-Anteil auf Cent gerundet und Owner2 als Rest
-     * zum (gerundeten) Betrag gebildet — so gilt pro Zeile Owner1 + Owner2 =
-     * Betrag und die Spalten summieren sich stimmig zum jeweiligen Gesamt.
+     * werden Betrag und Anteil von Eigentümer 1 auf Cent gerundet und
+     * Eigentümer 2 als Rest zum (gerundeten) Betrag gebildet — so gilt pro
+     * Zeile Eigentümer 1 + Eigentümer 2 = Betrag und die Spalten summieren sich
+     * stimmig zum jeweiligen Gesamt.
      * Vor dem Stichtag die ungerundeten Rohwerte (alte Logik). */
     function shiftCostShow(shift) {
         const c = splitCost(shift);
@@ -1866,6 +1886,7 @@
     }
 
     function renderAdminShifts() {
+        applyOwnerLabelsToHeaders();
         fillYearMonthSelects('#adminYear', '#adminMonth', viewableShifts);
         const sel = $('#adminEmpFilter');
         const cur = sel.value;
@@ -1883,7 +1904,7 @@
         tbody.innerHTML = '';
         let totalMin = 0;
         // Pro Schicht wird DERSELBE Betrag angezeigt UND summiert (ab Stichtag auf
-        // Cent gerundet mit Owner1 + Owner2 = Betrag; davor Rohwerte). Dadurch
+        // Cent gerundet mit Eigentümer 1 + Eigentümer 2 = Betrag; davor Rohwerte). Dadurch
         // ergeben die Spalten exakt die Gesamtwerte und jede Schicht zeigt überall
         // — Stundenliste, CSV, PDF — denselben Betrag.
         const hasV2 = list.some(s => isCalcV2Date(s.date));
@@ -1919,7 +1940,7 @@
             tbody.innerHTML = `<tr><td colspan="12" class="muted" style="text-align:center;padding:2rem">Keine Einträge</td></tr>`;
         }
         // Monatspauschalen aufschlagen: pro Mitarbeiter wird die Pauschale in
-        // jedem Monat mit ≥1 Schicht zu Brutto + Owner1/Owner2-Kosten addiert.
+        // jedem Monat mit ≥1 Schicht zu Brutto + Eigentümer-1/Eigentümer-2-Kosten addiert.
         // Aufteilung der Pauschale konstant 50/50 (NICHT raum-/anteilsbasiert).
         const factor = ABGABEN_PCT / 100;
         const empMonthsMap = new Map();
@@ -1934,15 +1955,15 @@
             // Monate vor dem Stichtag keine Pauschale beitragen.
             months.forEach(month => { pauschaleSum += monatspauschaleForMonth(empId, month); });
         });
-        // Pauschale ebenfalls stichtaggerecht auf Cent: Owner1-Hälfte gerundet,
-        // Owner2 als Rest zum gerundeten Gesamt — so gilt auch inkl. Pauschale
-        // Owner1 + Owner2 = Brutto.
+        // Pauschale ebenfalls stichtaggerecht auf Cent: Hälfte von Eigentümer 1 gerundet,
+        // Eigentümer 2 als Rest zum gerundeten Gesamt — so gilt auch inkl. Pauschale
+        // Eigentümer 1 + Eigentümer 2 = Brutto.
         const pauschaleAmtDisp = hasV2 ? roundHalfUp(pauschaleSum)     : pauschaleSum;
         const pauschaleSDisp   = hasV2 ? roundHalfUp(pauschaleSum / 2) : pauschaleSum / 2;
         const pauschaleBDisp   = pauschaleAmtDisp - pauschaleSDisp;
         // Gesamtwerte. Ab Stichtag alles aus den (cent-gerundeten) Anzeigebeträgen:
         // Abgaben = 31,17 % der Kosten, Gesamt = Kosten + Abgaben — die Zusammen-
-        // fassung ist in sich stimmig und Owner1 + Owner2 = Verdienst. Davor die
+        // fassung ist in sich stimmig und Eigentümer 1 + Eigentümer 2 = Verdienst. Davor die
         // alte Rechnung (Rohsummen, Rundung erst in der Anzeige) — unverändert.
         const agg = { sBase: sSum + pauschaleSDisp, bBase: bSum + pauschaleBDisp };
         if (hasV2) {
@@ -2125,10 +2146,10 @@
             'Typ','Stundenlohn','Brutto (EUR)',
             `RV-Anteil AN (${rvPctStr}%, EUR)`,
             'Auszahlung (EUR)',
-            'Kosten Owner1','Kosten Owner2','Notiz'
+            `Kosten ${owner1Label()}`, `Kosten ${owner2Label()}`, 'Notiz'
         ]];
         // Pro Schicht DERSELBE Betrag für Anzeige UND Summe (ab Stichtag auf Cent,
-        // Owner1 + Owner2 = Betrag; davor Rohwerte). RV/Auszahlung kommen aus
+        // Eigentümer 1 + Eigentümer 2 = Betrag; davor Rohwerte). RV/Auszahlung kommen aus
         // perShiftPayoutMap — ebenfalls stichtaggerecht, sodass sie sich exakt zur
         // Auszahlung pro Mitarbeiter aufsummieren.
         const tot = { hours: 0, amt: 0, sBase: 0, bBase: 0 };
@@ -2177,14 +2198,14 @@
             byEmp.set(empId, { ...p, befreit: p.alleBefreit });
             pauschaleSum += p.pauschaleTotal;
         });
-        // Monatspauschalen erhöhen Brutto und werden 50/50 zwischen Owner1 und
-        // Owner2 aufgeteilt (NICHT raumbasiert). Die Pauschalabgaben (31,17 %)
+        // Monatspauschalen erhöhen Brutto und werden 50/50 zwischen Eigentümer 1 und
+        // Eigentümer 2 aufgeteilt (NICHT raumbasiert). Die Pauschalabgaben (31,17 %)
         // fallen darauf wie auf jedes andere Brutto an.
         const factor = ABGABEN_PCT / 100;
-        // Pauschale stichtaggerecht 50/50 (Owner1-Hälfte gerundet, Owner2 als
+        // Pauschale stichtaggerecht 50/50 (Hälfte von Eigentümer 1 gerundet, Eigentümer 2 als
         // Rest). Ab Stichtag Kosten/Abgaben/Gesamt aus den (cent-gerundeten)
         // Anzeige-Summen (Abgaben = 31,17 % der Kosten, Gesamt = Kosten + Abgaben,
-        // Owner1 + Owner2 = Brutto); davor die alte Rechnung aus den Rohwerten.
+        // Eigentümer 1 + Eigentümer 2 = Brutto); davor die alte Rechnung aus den Rohwerten.
         const pauschaleAmtDisp = hasV2 ? roundHalfUp(pauschaleSum)     : pauschaleSum;
         const pauschaleSDisp   = hasV2 ? roundHalfUp(pauschaleSum / 2) : pauschaleSum / 2;
         const pauschaleBDisp   = pauschaleAmtDisp - pauschaleSDisp;
@@ -2248,19 +2269,20 @@
             rows.push([`Der RV-Eigenanteil wurde dort aus der Mindestbeitragsbemessungsgrundlage berechnet (Gesamtbeitrag ${MIN_BEITRAG_GESAMT_EUR.toFixed(2)} EUR abzüglich AG-Pauschale ${AG_PAUSCHALE_GEWERBE_PCT} % vom Brutto) und liegt daher höher als ${rvPctStr} %.`]);
         }
         rows.push([]);
-        rows.push(['Kosten Owner1 (EUR)', sBase.toFixed(2)]);
+        const o1 = owner1Label(), o2 = owner2Label();
+        rows.push([`Kosten ${o1} (EUR)`, sBase.toFixed(2)]);
         if (pauschaleSum > 0) {
             rows.push(['  davon Pauschale-Anteil 50% (EUR)', pauschaleSDisp.toFixed(2)]);
         }
-        rows.push([`Abgaben Owner1 (${pctStr}%)`, sAbg.toFixed(2)]);
-        rows.push(['Gesamt Owner1 (EUR)', sTot.toFixed(2)]);
+        rows.push([`Abgaben ${o1} (${pctStr}%)`, sAbg.toFixed(2)]);
+        rows.push([`Gesamt ${o1} (EUR)`, sTot.toFixed(2)]);
         rows.push([]);
-        rows.push(['Kosten Owner2 (EUR)', bBase.toFixed(2)]);
+        rows.push([`Kosten ${o2} (EUR)`, bBase.toFixed(2)]);
         if (pauschaleSum > 0) {
             rows.push(['  davon Pauschale-Anteil 50% (EUR)', pauschaleBDisp.toFixed(2)]);
         }
-        rows.push([`Abgaben Owner2 (${pctStr}%)`, bAbg.toFixed(2)]);
-        rows.push(['Gesamt Owner2 (EUR)', bTot.toFixed(2)]);
+        rows.push([`Abgaben ${o2} (${pctStr}%)`, bAbg.toFixed(2)]);
+        rows.push([`Gesamt ${o2} (EUR)`, bTot.toFixed(2)]);
         // summary = exakt die Werte der ZUSAMMENFASSUNG oben, damit andere
         // Ausgaben (z. B. die PDF-Fußzeile) dieselben Zahlen zeigen und nichts
         // abweicht.
@@ -2363,8 +2385,14 @@
         const pctStr = String(ABGABEN_PCT).replace('.', ',');
         doc.setFontSize(10);
         doc.text(`Einträge: ${list.length}   Stunden: ${fmtHours(totalMin)}   Verdienst gesamt: ${fmtEUR(summary.bruttoGesamt)}`, 40, yPos);
-        doc.text(`Owner1:   Kosten ${fmtEUR(summary.sBase)}  +  Abgaben (${pctStr}%) ${fmtEUR(summary.sAbg)}  =  Gesamt ${fmtEUR(summary.sTot)}`, 40, yPos + 16);
-        doc.text(`Owner2: Kosten ${fmtEUR(summary.bBase)}  +  Abgaben (${pctStr}%) ${fmtEUR(summary.bAbg)}  =  Gesamt ${fmtEUR(summary.bTot)}`, 40, yPos + 32);
+        // Beide Zeilen auf gleiche Label-Breite auffüllen, damit die Spalten
+        // untereinander stehen — die Labels sind frei konfigurierbar und
+        // dadurch unterschiedlich lang.
+        const o1 = owner1Label(), o2 = owner2Label();
+        const padTo = Math.max(o1.length, o2.length) + 2;
+        const lbl = n => (n + ':').padEnd(padTo);
+        doc.text(`${lbl(o1)}Kosten ${fmtEUR(summary.sBase)}  +  Abgaben (${pctStr}%) ${fmtEUR(summary.sAbg)}  =  Gesamt ${fmtEUR(summary.sTot)}`, 40, yPos + 16);
+        doc.text(`${lbl(o2)}Kosten ${fmtEUR(summary.bBase)}  +  Abgaben (${pctStr}%) ${fmtEUR(summary.bAbg)}  =  Gesamt ${fmtEUR(summary.bTot)}`, 40, yPos + 32);
         doc.save(exportFilenameBase() + '.pdf');
     }
 
@@ -2873,6 +2901,7 @@
         $$('#backupPasswordForm input, #backupPasswordForm button').forEach(el => el.disabled = !admin);
         $('#settingsForm').title = admin ? '' : 'Nur Admins können Einstellungen ändern.';
         renderWageHistory();
+        applyOwnerLabelsToHeaders();
         const tbody = $('#roomsTable tbody');
         tbody.innerHTML = '';
         Object.entries(settings().rooms).forEach(([code, r]) => {
