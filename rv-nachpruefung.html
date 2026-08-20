@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RV-Nachprüfung — Mindestbeitragsbemessung</title>
+<style>
+  :root { --accent: #bbce00; --bg: #f6f7f2; --card: #fff; --line: #d8ddc2; --warn: #b34700; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 1.5rem; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: #1a1a1a; line-height: 1.5; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.05rem; margin: 1.5rem 0 .5rem; }
+  .sub { color: #555; margin: 0 0 1.25rem; font-size: .92rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+          padding: 1rem 1.15rem; margin-bottom: 1rem; }
+  label { display: block; font-weight: 600; font-size: .88rem; margin-bottom: .3rem; }
+  input[type=month], input[type=file] { font: inherit; padding: .4rem; border: 1px solid var(--line);
+          border-radius: 5px; background: #fff; }
+  textarea { width: 100%; min-height: 90px; font-family: ui-monospace, Consolas, monospace;
+             font-size: .8rem; padding: .5rem; border: 1px solid var(--line); border-radius: 5px; }
+  button { font: inherit; font-weight: 600; padding: .5rem 1rem; border: 1px solid var(--line);
+           border-radius: 5px; background: var(--accent); cursor: pointer; }
+  button.ghost { background: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end; }
+  table { border-collapse: collapse; width: 100%; font-size: .87rem; }
+  th, td { border-bottom: 1px solid var(--line); padding: .4rem .55rem; text-align: right; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  thead th { background: var(--accent); border-bottom: 1px solid #9aa800; }
+  tbody tr:nth-child(even) { background: #f0f8c8; }
+  tfoot td { font-weight: 700; border-top: 2px solid #9aa800; }
+  .diff { color: var(--warn); font-weight: 700; }
+  .note { font-size: .85rem; color: #555; }
+  .warn { border-left: 4px solid var(--warn); background: #fff6f0; }
+  .ok { border-left: 4px solid #4a8000; background: #f4f9e8; }
+  .scroll { overflow-x: auto; }
+  code { background: #eceee2; padding: .1rem .3rem; border-radius: 3px; font-size: .85em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>RV-Nachprüfung — Mindestbeitragsbemessung</h1>
+<p class="sub">
+  Findet Mitarbeiter-Monate, in denen der gemeldete RV-Eigenanteil zu niedrig war, weil die
+  Mindestbeitragsbemessungsgrundlage (175&nbsp;EUR) noch nicht implementiert war.
+  Läuft vollständig offline — es werden keine Daten übertragen oder gespeichert.
+</p>
+
+<div class="card">
+  <h2 style="margin-top:0">1. Backup laden</h2>
+  <p class="note" style="margin-top:0">
+    Entschlüsseltes Backup-JSON auswählen (eine <code>.enc</code>-Datei vorher mit
+    <code>decrypt.html</code> entschlüsseln). Alternativ den JSON-Inhalt unten einfügen.
+  </p>
+  <div class="row">
+    <div>
+      <label for="file">Backup-Datei (.json)</label>
+      <input type="file" id="file" accept=".json,application/json">
+    </div>
+  </div>
+  <label for="paste" style="margin-top:.9rem">…oder JSON hier einfügen</label>
+  <textarea id="paste" placeholder='{ "employees": [...], "shifts": [...], "settings": {...} }'></textarea>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">2. Zeitraum</h2>
+  <p class="note" style="margin-top:0">
+    Der Fix ist am <strong>10.06.2026</strong> eingespielt worden. Abgerechnet wird jeweils zu Beginn
+    des Folgemonats — betroffen sind daher die Abrechnungsmonate bis einschließlich <strong>Mai 2026</strong>.
+    Der 3,6&nbsp;%-Abzug selbst existiert erst seit dem 29.04.2026; für Monate davor wurde
+    <em>überhaupt kein</em> RV-Anteil ausgewiesen (separat gekennzeichnet).
+  </p>
+  <div class="row">
+    <div>
+      <label for="von">Von (Monat)</label>
+      <input type="month" id="von" value="2026-04">
+    </div>
+    <div>
+      <label for="bis">Bis (Monat, einschließlich)</label>
+      <input type="month" id="bis" value="2026-05">
+    </div>
+    <div>
+      <button id="run" disabled>Prüfen</button>
+    </div>
+  </div>
+</div>
+
+<div id="out"></div>
+
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ------------------------------------------------------------------
+   * Rechenkern — 1:1 aus app.js übernommen, damit die Nachprüfung exakt
+   * dieselben Beträge liefert wie die App. Bei Änderungen an der
+   * Lohn-/RV-Logik in app.js muss dieser Block mitgepflegt werden.
+   * ------------------------------------------------------------------ */
+
+  const MIN_BEITRAGSBEMESSUNG_EUR = 175;
+  const RV_BEITRAG_GESAMT_PCT     = 18.6;
+  const AG_PAUSCHALE_GEWERBE_PCT  = 15;
+  const MIN_BEITRAG_GESAMT_EUR    = Math.round(MIN_BEITRAGSBEMESSUNG_EUR * RV_BEITRAG_GESAMT_PCT) / 100;
+  const CALC_V2_FROM_MONTH        = '2026-08';
+  // Stichtage der beiden relevanten Commits (nur für die Einordnung im Bericht).
+  const RV_ABZUG_AB_DATUM = '2026-04-29';  // ea36f51 — 3,6 %-Abzug eingeführt
+  const FIX_AB_DATUM      = '2026-06-10';  // 61c895b — Mindestbeitragsbemessung
+
+  function roundHalfUp(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+  function minutesOf(start, end) {
+    const [sh, sm] = String(start).split(':').map(Number);
+    const [eh, em] = String(end).split(':').map(Number);
+    let s = sh * 60 + sm;
+    let e = eh * 60 + em;
+    if (e <= s) e += 24 * 60;
+    return e - s;
+  }
+
+  function wageRatesFor(db, date) {
+    const hist = Array.isArray(db.settings && db.settings.wageHistory) ? db.settings.wageHistory : [];
+    if (hist.length === 0) return { single: 0, double: 0 };
+    let chosen = hist[0];
+    for (const h of hist) {
+      if (h.gueltigAb <= date) chosen = h; else break;
+    }
+    return { single: chosen.single, double: chosen.double };
+  }
+
+  function wageFor(db, shift) {
+    const rates = wageRatesFor(db, shift.date);
+    const rate = shift.isDouble ? rates.double : rates.single;
+    const mins = minutesOf(shift.startTime, shift.endTime);
+    return { minutes: mins, rate, amount: (mins / 60) * rate };
+  }
+
+  // Ab dem Stichtag wird jeder Schicht-Betrag einmal auf Cent gerundet.
+  function shiftPayAmount(db, shift) {
+    const a = wageFor(db, shift).amount;
+    return (shift.date || '').slice(0, 7) >= CALC_V2_FROM_MONTH ? roundHalfUp(a) : a;
+  }
+
+  function empById(db, id) { return (db.employees || []).find(e => e.id === id); }
+
+  function rvBefreitForMonth(db, empId, month) {
+    const e = empById(db, empId);
+    const hist = Array.isArray(e && e.rvHistorie) ? e.rvHistorie : [];
+    if (hist.length === 0) return !!(e && e.rvBefreit);
+    let chosen = hist[0];
+    for (const h of hist) {
+      if (h.gueltigAb <= month) chosen = h; else break;
+    }
+    return !!chosen.befreit;
+  }
+
+  function monatspauschaleForMonth(db, empId, month) {
+    const e = empById(db, empId);
+    const ps = Math.max(0, Number(e && e.monatspauschale) || 0);
+    if (ps <= 0) return 0;
+    const v = e && e.pauschaleAb;
+    const ab = (typeof v === 'string' && /^\d{4}-\d{2}$/.test(v)) ? v : '';
+    if (ab && month < ab) return 0;
+    return ps;
+  }
+
+  /* Aktuelle (korrekte) Logik: unter 175 EUR greift die Mindestbeitragsbemessung. */
+  function payoutNeu(db, monatsBrutto, rvBefreit) {
+    const brutto = roundHalfUp(monatsBrutto);
+    if (rvBefreit) return { brutto, rvAnteil: 0, auszahlung: brutto, mindestGreift: false };
+    if (brutto < MIN_BEITRAGSBEMESSUNG_EUR) {
+      const agAnteil = roundHalfUp(brutto * AG_PAUSCHALE_GEWERBE_PCT / 100);
+      const rvAnteil = roundHalfUp(MIN_BEITRAG_GESAMT_EUR - agAnteil);
+      return { brutto, rvAnteil, auszahlung: roundHalfUp(brutto - rvAnteil), mindestGreift: true };
+    }
+    const pct = Number(db.settings && db.settings.rvAnteilProzent) || 0;
+    const rvAnteil = roundHalfUp(brutto * pct / 100);
+    return { brutto, rvAnteil, auszahlung: roundHalfUp(brutto - rvAnteil), mindestGreift: false };
+  }
+
+  /* Alte Logik vor dem 10.06.2026: pauschal rvAnteilProzent vom Brutto, ohne
+   * Schwelle. Math.round statt roundHalfUp — exakt wie damals im Code, damit
+   * die Differenz dem entspricht, was tatsächlich gemeldet wurde. */
+  function payoutAlt(db, monatsBrutto, rvBefreit) {
+    const round = n => Math.round(n * 100) / 100;
+    const b = round(monatsBrutto);
+    if (rvBefreit) return { brutto: b, rvAnteil: 0, auszahlung: b };
+    const pct = Number(db.settings && db.settings.rvAnteilProzent) || 0;
+    const rvAnteil = round(b * pct / 100);
+    return { brutto: b, rvAnteil, auszahlung: round(b - rvAnteil) };
+  }
+
+  /* ------------------------------------------------------------------ */
+
+  const fmt = n => n.toFixed(2).replace('.', ',') + ' EUR';
+  const MONTH_NAMES = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+  const monthLabel = m => {
+    const [y, mo] = m.split('-');
+    return `${MONTH_NAMES[Number(mo) - 1]} ${y}`;
+  };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  let db = null;
+  const $ = id => document.getElementById(id);
+
+  function setDb(raw, quelle) {
+    try {
+      const parsed = JSON.parse(raw);
+      // Backups der App sind entweder die DB selbst oder ein Wrapper mit .data.
+      const cand = parsed && parsed.data && parsed.data.employees ? parsed.data : parsed;
+      if (!cand || !Array.isArray(cand.employees) || !Array.isArray(cand.shifts)) {
+        throw new Error('Kein gültiges Backup: employees/shifts fehlen.');
+      }
+      db = cand;
+      $('run').disabled = false;
+      $('out').innerHTML = `<div class="card ok"><strong>Backup geladen</strong> (${esc(quelle)}) — ` +
+        `${cand.employees.length} Mitarbeiter, ${cand.shifts.length} Schichten.</div>`;
+    } catch (err) {
+      db = null;
+      $('run').disabled = true;
+      $('out').innerHTML = `<div class="card warn"><strong>Fehler:</strong> ${esc(err.message)}</div>`;
+    }
+  }
+
+  $('file').addEventListener('change', ev => {
+    const f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => setDb(r.result, f.name);
+    r.onerror = () => { $('out').innerHTML = '<div class="card warn">Datei konnte nicht gelesen werden.</div>'; };
+    r.readAsText(f);
+  });
+
+  $('paste').addEventListener('input', ev => {
+    const v = ev.target.value.trim();
+    if (v.length > 20) setDb(v, 'eingefügt');
+  });
+
+  $('run').addEventListener('click', () => {
+    if (!db) return;
+    const von = $('von').value, bis = $('bis').value;
+    if (!von || !bis || von > bis) {
+      $('out').innerHTML = '<div class="card warn">Ungültiger Zeitraum.</div>';
+      return;
+    }
+
+    // Schichten nach Mitarbeiter + Monat gruppieren (die 175-EUR-Schwelle ist
+    // eine Monatsgrenze, deshalb wird nie über Monate hinweg summiert).
+    const groups = new Map();
+    (db.shifts || []).forEach(s => {
+      const month = (s.date || '').slice(0, 7);
+      if (month < von || month > bis) return;
+      const key = s.employeeId + '|' + month;
+      if (!groups.has(key)) groups.set(key, { empId: s.employeeId, month, shifts: [] });
+      groups.get(key).shifts.push(s);
+    });
+
+    const rows = [];
+    groups.forEach(g => {
+      const schichtBrutto = g.shifts.reduce((sum, s) => sum + shiftPayAmount(db, s), 0);
+      const pauschale = monatspauschaleForMonth(db, g.empId, g.month);
+      const monatsBrutto = schichtBrutto + pauschale;
+      const befreit = rvBefreitForMonth(db, g.empId, g.month);
+      const neu = payoutNeu(db, monatsBrutto, befreit);
+      const alt = payoutAlt(db, monatsBrutto, befreit);
+      const emp = empById(db, g.empId);
+      rows.push({
+        name: (emp && emp.name) || '(unbekannt: ' + g.empId + ')',
+        month: g.month,
+        befreit,
+        schichten: g.shifts.length,
+        // Der Monat wurde zu Beginn des Folgemonats abgerechnet; lag das noch
+        // vor dem 29.04.2026, gab es damals gar keinen RV-Abzug.
+        keinAbzugDamals: naechsterMonatsErster(g.month) < RV_ABZUG_AB_DATUM,
+        brutto: neu.brutto,
+        rvAlt: alt.rvAnteil,
+        rvNeu: neu.rvAnteil,
+        diff: roundHalfUp(neu.rvAnteil - alt.rvAnteil),
+        mindestGreift: neu.mindestGreift,
+      });
+    });
+
+    rows.sort((a, b) => (a.month.localeCompare(b.month)) || a.name.localeCompare(b.name, 'de'));
+    render(rows, von, bis);
+  });
+
+  // Erster Tag des Folgemonats — der Zeitpunkt, zu dem der Monatsabschluss lief.
+  function naechsterMonatsErster(month) {
+    const [y, m] = month.split('-').map(Number);
+    const ny = m === 12 ? y + 1 : y;
+    const nm = m === 12 ? 1 : m + 1;
+    return `${ny}-${String(nm).padStart(2, '0')}-01`;
+  }
+
+  function render(rows, von, bis) {
+    const betroffen = rows.filter(r => Math.abs(r.diff) >= 0.005);
+    const summe = roundHalfUp(betroffen.reduce((s, r) => s + r.diff, 0));
+    const vorAbzug = rows.filter(r => r.keinAbzugDamals && !r.befreit);
+
+    let html = '';
+
+    html += `<div class="card"><h2 style="margin-top:0">Ergebnis — ${esc(monthLabel(von))} bis ${esc(monthLabel(bis))}</h2>`;
+    html += `<p class="note" style="margin-top:0">${rows.length} Mitarbeiter-Monate geprüft, ` +
+            `<strong>${betroffen.length}</strong> mit abweichendem RV-Eigenanteil.</p></div>`;
+
+    if (!betroffen.length) {
+      html += '<div class="card ok"><strong>Keine Abweichung.</strong> In diesem Zeitraum lag kein ' +
+              'RV-pflichtiger Mitarbeiter-Monat unter 175 EUR Brutto — die damals gemeldeten Beträge ' +
+              'stimmen mit der heutigen Berechnung überein.</div>';
+    } else {
+      html += '<div class="card warn"><strong>Nachmeldung prüfen.</strong> In den folgenden ' +
+              'Mitarbeiter-Monaten war der gemeldete RV-Eigenanteil zu niedrig. Die Differenz ist der ' +
+              'Betrag, der zusätzlich hätte einbehalten und gemeldet werden müssen — Summe ' +
+              `<strong>${fmt(summe)}</strong>.</div>`;
+
+      html += '<div class="card scroll"><table><thead><tr>' +
+              '<th>Monat</th><th>Mitarbeiter</th><th>Schichten</th><th>Brutto</th>' +
+              '<th>RV gemeldet (3,6&nbsp;%)</th><th>RV korrekt</th><th>Differenz</th>' +
+              '</tr></thead><tbody>';
+      betroffen.forEach(r => {
+        html += `<tr><td>${esc(monthLabel(r.month))}</td><td>${esc(r.name)}</td>` +
+                `<td>${r.schichten}</td><td>${fmt(r.brutto)}</td>` +
+                `<td>${fmt(r.rvAlt)}</td><td>${fmt(r.rvNeu)}</td>` +
+                `<td class="diff">+ ${fmt(r.diff)}</td></tr>`;
+      });
+      html += `</tbody><tfoot><tr><td colspan="6">Summe Nachmeldung</td>` +
+              `<td class="diff">+ ${fmt(summe)}</td></tr></tfoot></table>`;
+      html += '<p class="note">Der korrekte Anteil ist ' +
+              `${fmt(MIN_BEITRAG_GESAMT_EUR)} (18,6&nbsp;% aus 175&nbsp;EUR) abzüglich 15&nbsp;% ` +
+              'AG-Pauschale vom tatsächlichen Brutto.</p>';
+      html += '<p><button class="ghost" id="csv">Als CSV speichern</button></p></div>';
+    }
+
+    if (vorAbzug.length) {
+      html += '<div class="card warn"><strong>Zusätzlich:</strong> ' +
+              `${vorAbzug.length} Mitarbeiter-Monat(e) wurden vor dem 29.04.2026 abgerechnet — ` +
+              'damals gab es im Programm noch gar keinen RV-Abzug, es wurde also ' +
+              '<em>der volle</em> korrekte Anteil nicht einbehalten. Diese Monate sind gesondert zu prüfen: ' +
+              esc(vorAbzug.map(r => `${r.name} (${monthLabel(r.month)})`).join(', ')) + '.</div>';
+    }
+
+    // Vollständige Übersicht — auch die unauffälligen Monate, zur Kontrolle.
+    html += '<div class="card scroll"><h2 style="margin-top:0">Alle geprüften Mitarbeiter-Monate</h2>' +
+            '<table><thead><tr><th>Monat</th><th>Mitarbeiter</th><th>Brutto</th>' +
+            '<th>RV gemeldet</th><th>RV korrekt</th><th>Differenz</th><th>Status</th>' +
+            '</tr></thead><tbody>';
+    rows.forEach(r => {
+      const status = r.befreit ? 'RV-befreit'
+                   : r.mindestGreift ? 'Mindestbeitrag greift'
+                   : 'regulär 3,6 %';
+      const d = Math.abs(r.diff) >= 0.005 ? `<span class="diff">+ ${fmt(r.diff)}</span>` : '–';
+      html += `<tr><td>${esc(monthLabel(r.month))}</td><td>${esc(r.name)}</td>` +
+              `<td>${fmt(r.brutto)}</td><td>${fmt(r.rvAlt)}</td><td>${fmt(r.rvNeu)}</td>` +
+              `<td>${d}</td><td style="text-align:left">${status}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+
+    $('out').innerHTML = html;
+
+    const csvBtn = document.getElementById('csv');
+    if (csvBtn) csvBtn.addEventListener('click', () => exportCsv(betroffen, summe));
+  }
+
+  function exportCsv(rows, summe) {
+    const sep = ';';
+    const lines = [['Monat','Mitarbeiter','Schichten','Brutto (EUR)','RV gemeldet (EUR)','RV korrekt (EUR)','Differenz (EUR)'].join(sep)];
+    rows.forEach(r => {
+      lines.push([
+        r.month, r.name, r.schichten,
+        r.brutto.toFixed(2).replace('.', ','),
+        r.rvAlt.toFixed(2).replace('.', ','),
+        r.rvNeu.toFixed(2).replace('.', ','),
+        r.diff.toFixed(2).replace('.', ','),
+      ].join(sep));
+    });
+    lines.push(['','','','','','Summe', summe.toFixed(2).replace('.', ',')].join(sep));
+    // BOM, damit Excel die Umlaute korrekt liest.
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'rv-nachpruefung.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+})();
+</script>
+</body>
+</html>
