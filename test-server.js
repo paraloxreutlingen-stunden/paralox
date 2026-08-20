@@ -157,31 +157,29 @@ function isDuplicate(shifts, candidate, ignoreId = null) {
 function installIfMissing() {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     if (!fs.existsSync(EMP_FILE)) {
-        // Default-Admin Owner1, PIN 1234 (bitte sofort ändern!)
+        // Default-Admin Eigentümer 1, PIN 1234 (bitte sofort ändern!)
         const emps = [{
             id: 1,
-            name: 'Owner1',
+            name: 'Eigentümer 1',
             pinHash: hashPin('1234'),
             isAdmin: true,
             isActive: true,
             createdAt: new Date().toISOString(),
         }];
         saveJson(EMP_FILE, emps);
-        console.log('>> Test-Admin angelegt: Name="Owner1", PIN="1234"');
+        console.log('>> Test-Admin angelegt: Name="Eigentümer 1", PIN="1234"');
     }
     if (!fs.existsSync(SHIFT_FILE)) saveJson(SHIFT_FILE, []);
     if (!fs.existsSync(SET_FILE)) {
+        // Generische Testwerte — dieses Repo ist öffentlich, hier gehören
+        // keine echten Raumnamen, Stundenlöhne oder Eigentümer-Anteile hin.
         saveJson(SET_FILE, {
-            wageSingle: 14.00,
-            wageDouble: 19.00,
+            wageSingle: 0,
+            wageDouble: 0,
             abgabenPercent: 31.17,
             rooms: {
-                FP: { name: 'Raum 1',       owner1: 100, owner2: 0 },
-                SL: { name: 'Raum 3', owner1: 100, owner2: 0 },
-                BO: { name: 'Raum 4', owner1: 100, owner2: 0 },
-                VS: { name: 'Raum 2',         owner1: 0,   owner2: 100 },
-                PB: { name: 'Raum 5',       owner1: 0,   owner2: 100 },
-                WS: { name: 'Raum 6',        owner1: 50,  owner2: 50 },
+                R1: { name: 'Raum 1', owner1: 50, owner2: 50 },
+                R2: { name: 'Raum 2', owner1: 50, owner2: 50 },
             },
             doubleSplit: { main: 50, owner1: 25, owner2: 25 },
         });
@@ -484,7 +482,7 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/install.php') {
             res.statusCode = 200;
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
-            return res.end('<h1>Installer deaktiviert</h1><p>Im Testserver bereits automatisch eingerichtet. Login: <b>Owner1</b> / PIN <b>1234</b></p><p><a href="/">Zur App</a></p>');
+            return res.end('<h1>Installer deaktiviert</h1><p>Im Testserver bereits automatisch eingerichtet. Login: <b>Eigentümer 1</b> / PIN <b>1234</b></p><p><a href="/">Zur App</a></p>');
         }
         serveStatic(req, res, pathname);
     } catch (e) {
@@ -498,7 +496,7 @@ server.listen(PORT, () => {
     console.log('==========================================');
     console.log(' Paralox Stunden - Testserver laeuft');
     console.log(' URL:    http://localhost:' + PORT);
-    console.log(' Login:  Owner1  /  PIN: 1234');
+    console.log(' Login:  Eigentümer 1  /  PIN: 1234');
     console.log(' Stop:   Strg+C');
     console.log('==========================================');
 });

@@ -43,17 +43,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$alreadyInstalled) {
             file_put_contents($EMP_FILE, json_encode($emp, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
             file_put_contents($SHIFT_FILE, "[]");
 
+            // WICHTIG: Diese Defaults landen im öffentlichen Quellcode auf
+            // GitHub. Hier KEINE echten Raumnamen, Stundenlöhne oder Anteile
+            // hardcoden — generische Platzhalter, die der Admin nach der
+            // Installation in den Einstellungen überschreibt.
             $settings = [
-                'wageSingle'    => 14.00,
-                'wageDouble'    => 19.00,
+                'wageSingle'    => 0,
+                'wageDouble'    => 0,
                 'abgabenPercent'=> 31.17,
                 'rooms' => [
-                    'FP' => ['name' => 'Raum 1',       'owner1' => 100, 'owner2' => 0],
-                    'SL' => ['name' => 'Raum 3', 'owner1' => 100, 'owner2' => 0],
-                    'BO' => ['name' => 'Raum 4', 'owner1' => 100, 'owner2' => 0],
-                    'VS' => ['name' => 'Raum 2',         'owner1' => 0,   'owner2' => 100],
-                    'PB' => ['name' => 'Raum 5',       'owner1' => 0,   'owner2' => 100],
-                    'WS' => ['name' => 'Raum 6',        'owner1' => 50,  'owner2' => 50],
+                    'R1' => ['name' => 'Raum 1', 'owner1' => 50, 'owner2' => 50],
+                    'R2' => ['name' => 'Raum 2', 'owner1' => 50, 'owner2' => 50],
                 ],
                 'doubleSplit' => ['main' => 50, 'owner1' => 25, 'owner2' => 25],
             ];
@@ -92,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$alreadyInstalled) {
         <?php if ($error): ?><div class="alert error"><?=h($error)?></div><?php endif; ?>
         <form method="post" autocomplete="off">
             <label>Name
-                <input type="text" name="name" value="<?=h($_POST['name'] ?? 'Owner1')?>" required>
+                <input type="text" name="name" value="<?=h($_POST['name'] ?? 'Admin')?>" required>
             </label>
             <label>PIN (4-10 Ziffern)
                 <input type="password" name="pin" pattern="\d{4,10}" required inputmode="numeric">
