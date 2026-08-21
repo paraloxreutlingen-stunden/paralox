@@ -75,7 +75,7 @@ async function loginAsAdmin(page) {
         const page = await ctx.newPage();
         await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 15000 });
         await page.waitForTimeout(500);
-        await seedDeviceSettings(page, 'Test-Firma GbR, Teststraße 1, 12345 Teststadt', 'backup@example.org');
+        await seedDeviceSettings(page, 'Test-Firma GbR, Teststraße 1, 12345 Teststadt', 'backup-test@example.org');
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(500);
 
@@ -91,7 +91,7 @@ async function loginAsAdmin(page) {
         check('Hinweis enthält "Tagessicherung per E-Mail (aktiv)"',
             /Tagessicherung per E-Mail \(aktiv\)/.test(n.text), n.text.slice(0, 80));
         check('Hinweis enthält den gerätespezifischen Empfänger',
-            /backup@example\.org/.test(n.text));
+            /backup-test@example\.org/.test(n.text));
         check('Hinweis nennt Auftragsverarbeiter (1&1 / GMX)',
             /1&1|GMX/.test(n.text));
         check('Hinweis nennt Rechtsgrundlage Art. 6 Abs. 1 lit. f',
@@ -249,8 +249,8 @@ async function loginAsAdmin(page) {
             /keine Übertragung an externe Dienste/.test(n.text));
         check('Hinweis erwähnt KEIN GMX',
             !/GMX|1&1/.test(n.text));
-        check('Hinweis erwähnt KEINEN Empfänger backup@example.org',
-            !/backup@example\.org/.test(n.text));
+        check('Hinweis erwähnt KEINEN Empfänger backup-test@example.org',
+            !/backup-test@example\.org/.test(n.text));
         check('Hinweis enthält den gerätespezifischen Verantwortlichen',
             /Test-Firma GbR/.test(n.text));
         await browser.close();
@@ -279,7 +279,7 @@ async function loginAsAdmin(page) {
         check('Hinweis nennt neue Adresse', /andere-adresse@firma\.de/.test(n.text),
             n.text.slice(0, 100));
         check('Hinweis nennt NICHT mehr die alte Adresse',
-            !/backup@example\.org/.test(n.text));
+            !/backup-test@example\.org/.test(n.text));
     }
 
     // -------- 4. Monatsabschluss erwähnt 10 Jahre Aufbewahrung --------

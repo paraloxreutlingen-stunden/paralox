@@ -168,10 +168,10 @@
      * bleiben damit lesbar. */
     function migrateOwnerKeys(obj) {
         if (!obj || typeof obj !== 'object') return obj;
-        if (obj.owner1 === undefined && obj.owner1   !== undefined) obj.owner1 = obj.owner1;
-        if (obj.owner2 === undefined && obj.owner2 !== undefined) obj.owner2 = obj.owner2;
-        delete obj.owner1;
-        delete obj.owner2;
+        if (obj.owner1 === undefined && obj.sandra   !== undefined) obj.owner1 = obj.sandra;
+        if (obj.owner2 === undefined && obj.benedikt !== undefined) obj.owner2 = obj.benedikt;
+        delete obj.sandra;
+        delete obj.benedikt;
         return obj;
     }
 
@@ -286,8 +286,8 @@
         // Sicherstellen dass jeder Mitarbeiter ein assignedTo hat
         data.employees.forEach(e => {
             // Migration der alten Eigentümer-Schlüssel (siehe migrateOwnerKeys).
-            if (e.assignedTo === 'owner1')        e.assignedTo = 'owner1';
-            else if (e.assignedTo === 'owner2') e.assignedTo = 'owner2';
+            if (e.assignedTo === 'sandra')        e.assignedTo = 'owner1';
+            else if (e.assignedTo === 'benedikt') e.assignedTo = 'owner2';
             // Frühere Fassungen leiteten ein fehlendes assignedTo aus dem
             // Mitarbeiter-NAMEN ab. Das ist entfallen, weil dafür ein echter
             // Personenname im Quellcode stehen müsste; bestehende Datensätze

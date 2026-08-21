@@ -107,9 +107,11 @@
   const AG_PAUSCHALE_GEWERBE_PCT  = 15;
   const MIN_BEITRAG_GESAMT_EUR    = Math.round(MIN_BEITRAGSBEMESSUNG_EUR * RV_BEITRAG_GESAMT_PCT) / 100;
   const CALC_V2_FROM_MONTH        = '2026-08';
-  // Stichtage der beiden relevanten Commits (nur für die Einordnung im Bericht).
-  const RV_ABZUG_AB_DATUM = '2026-04-29';  // ea36f51 — 3,6 %-Abzug eingeführt
-  const FIX_AB_DATUM      = '2026-06-10';  // 61c895b — Mindestbeitragsbemessung
+  /* Stichtage der beiden relevanten Programmstände (nur für die Einordnung im
+   * Bericht). Bewusst als Datum und nicht als Commit-Hash notiert: die Historie
+   * wurde einmal umgeschrieben, Hashes sind daher keine dauerhafte Referenz. */
+  const RV_ABZUG_AB_DATUM = '2026-04-29';  // 3,6 %-Abzug eingeführt
+  const FIX_AB_DATUM      = '2026-06-10';  // Mindestbeitragsbemessung ergänzt
 
   function roundHalfUp(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
 

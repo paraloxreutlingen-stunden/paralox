@@ -27,10 +27,10 @@ const ALT_FORMAT = {
     employees: [
         { id: 1, name: 'Admin', password: 'paralox', isAdmin: true, isAccountant: false,
           isActive: true, rvBefreit: false, rvHistorie: [{ gueltigAb: '2020-01', befreit: false }],
-          assignedTo: 'owner1', monatspauschale: 0, pauschaleAb: '', createdAt: '2020-01-01T00:00:00.000Z' },
+          assignedTo: 'sandra', monatspauschale: 0, pauschaleAb: '', createdAt: '2020-01-01T00:00:00.000Z' },
         { id: 2, name: 'Testkraft', password: 'paralox', isAdmin: false, isAccountant: false,
           isActive: true, rvBefreit: false, rvHistorie: [{ gueltigAb: '2020-01', befreit: false }],
-          assignedTo: 'owner2', monatspauschale: 0, pauschaleAb: '', createdAt: '2020-01-01T00:00:00.000Z' },
+          assignedTo: 'benedikt', monatspauschale: 0, pauschaleAb: '', createdAt: '2020-01-01T00:00:00.000Z' },
     ],
     shifts: [
         // 4 Std * 10 EUR = 40,00 EUR in Raum A (70/30) -> 28,00 / 12,00
@@ -45,11 +45,11 @@ const ALT_FORMAT = {
         wageHistory: [{ gueltigAb: '2020-01-01', single: 10, double: 10 }],
         abgabenPercent: 31.17, rvAnteilProzent: 3.6, dataController: '',
         rooms: {
-            A: { name: 'Raum A', owner1: 70, owner2: 30 },
-            B: { name: 'Raum B', owner1: 20, owner2: 80 },
+            A: { name: 'Raum A', sandra: 70, benedikt: 30 },
+            B: { name: 'Raum B', sandra: 20, benedikt: 80 },
         },
-        doubleSplit: { main: 50, owner1: 25, owner2: 25 },
-        labels: { owner1: 'Alpha GmbH', owner2: 'Beta OHG' },
+        doubleSplit: { main: 50, sandra: 25, benedikt: 25 },
+        labels: { sandra: 'Alpha GmbH', benedikt: 'Beta OHG' },
         dailyBackup: { enabled: false, recipient: '' },
         monthlyArchive: { enabled: false, recipient: '' },
     },
@@ -100,7 +100,7 @@ const storedDb = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)),
     check('Raum B Anteile übernommen', db.settings.rooms.B.owner1 === 20 && db.settings.rooms.B.owner2 === 80,
         JSON.stringify(db.settings.rooms.B));
     check('alte Raum-Schlüssel entfernt',
-        db.settings.rooms.A.owner1 === undefined && db.settings.rooms.A.owner2 === undefined);
+        db.settings.rooms.A.sandra === undefined && db.settings.rooms.A.benedikt === undefined);
     check('doubleSplit übernommen',
         db.settings.doubleSplit.owner1 === 25 && db.settings.doubleSplit.owner2 === 25,
         JSON.stringify(db.settings.doubleSplit));
@@ -156,7 +156,7 @@ const storedDb = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)),
 
     console.log('Neue Schlüssel gewinnen gegen alte');
     const gemischt = JSON.parse(JSON.stringify(ALT_FORMAT));
-    gemischt.settings.rooms.A = { name: 'Raum A', owner1: 60, owner2: 40, owner1: 70, owner2: 30 };
+    gemischt.settings.rooms.A = { name: 'Raum A', owner1: 60, owner2: 40, sandra: 70, benedikt: 30 };
     page = await openWith(browser, gemischt);
     await login(page);
     const db3 = await storedDb(page);
