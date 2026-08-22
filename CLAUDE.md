@@ -4,11 +4,22 @@
 
 ## Was die App tut
 
-Stundenverwaltung für einen Betrieb mit zwei Eigentümern (Eigentümer 1 & Eigentümer 2). Mitarbeiter erfassen Schichten (Datum/Beginn/Ende/Raum, optional Doppelüberwachung mit 2. Raum). Die App berechnet Verdienste, teilt Kosten gemäß Raum-Anteilen auf die Eigentümer auf, exportiert CSV/ODS/PDF und insbesondere ein **Minijob-PDF** (1 Seite pro Mitarbeiter pro Monat). DSGVO-Consent pro Mitarbeiter. Pinnwand-Mitteilung auf Login-Seite.
+Stundenverwaltung für einen Betrieb mit zwei Eigentümern (Eigentümer 1 & Eigentümer 2). Mitarbeiter erfassen Schichten (Datum/Beginn/Ende/Raum, optional Doppelüberwachung mit 2. Raum). Admins tragen **Urlaubstage** pro Mitarbeiter ein (siehe unten). Die App berechnet Verdienste, teilt Kosten gemäß Raum-Anteilen auf die Eigentümer auf, exportiert CSV/ODS/PDF und insbesondere ein **Minijob-PDF** (1 Seite pro Mitarbeiter pro Monat). DSGVO-Consent pro Mitarbeiter. Pinnwand-Mitteilung auf Login-Seite.
 
 Rollen: **Admin** (alles), **Buchhaltung** (nur Lesen, max. 90 Tage zurück), normaler **Mitarbeiter** (eigene Schichten erfassen + anzeigen). Admins können Schichten für andere nachtragen.
 
 Zwei Pflicht-Modals nach dem Login (in dieser Reihenfolge, sie überlagern sich nicht): DSGVO-Consent (einmalig pro Mitarbeiter) und die jährliche **Resturlaubs-Erinnerung** (ab 30.03. bis 30.06., einmal pro Mitarbeiter und Jahr, für alle Rollen).
+
+## Urlaubstage
+
+Urlaubstage liegen **als Einträge in `shifts`** mit `isVacation: true` — nicht in einer eigenen Liste. Nur so fließen sie automatisch in Brutto, Minijob-Grenze, RV-Berechnung, CSV/ODS/PDF und den 90-Tage-Filter der Buchhaltung; eine Parallelliste hieße, ein Dutzend Aggregationsstellen anzufassen, und eine übersehene wäre eine still falsche Abrechnung. Sie tragen keine Uhrzeiten, keinen Raum und 0 Stunden.
+
+- **Urlaubsentgelt** (§ 11 BUrlG): Durchschnitt der letzten 13 Wochen vor dem Urlaubstag, geteilt durch die tatsächlich **gearbeiteten Tage** in diesem Zeitraum (nicht durch Kalender- oder Fünf-Tage-Wochen — die Beschäftigung ist unregelmäßig). Frühere Urlaubstage zählen nicht in die Bemessung.
+- **Der Betrag wird beim Eintragen eingefroren** (`urlaubsBetrag` im Datensatz) und NIE neu gerechnet. Der Schnitt wandert mit jeder neuen Schicht; ein laufend neu berechneter Wert würde bereits gemeldete Abrechnungen nachträglich verändern. Gleiche Linie wie `wageHistory`, `rvHistorie` und `CALC_V2_FROM_MONTH`.
+- **Kostenaufteilung** 50/50 auf die Eigentümer (raumlos, wie die Monatspauschale).
+- **Urlaubsanspruch** wird nicht gepflegt, sondern gerechnet: `Arbeitstage im Jahr ÷ 365 × 24 Werktage` (`URLAUB_WERKTAGE_JAHR`). Basis sind die erfassten Schichten, ein Datum mit mehreren Schichten zählt als ein Arbeitstag. Der Anspruch wächst dadurch im laufenden Jahr mit und ist erst zum Jahresende endgültig.
+- Tage werden über `roundTage`/`fmtTage` auf **eine** Nachkommastelle geführt — nicht erst auf Cent und dann fürs Anzeigen nochmal runden, sonst wird 0,8547 über 0,85 zu 0,8 und der Rest geht nicht auf.
+- An einem Urlaubstag lässt sich keine Schicht erfassen und umgekehrt (`validateShiftPayload`).
 
 ## Architektur
 
@@ -68,7 +79,7 @@ Inlinet `style.css`, `config.js`, `crypto.js`, `storage.js`, `app.js` in `index.
 
 ## Tests
 
-Playwright-Tests im Root, mit `node test-*.js` einzeln ausführbar. Decken ab: Tablet-Login-Layout, Tabs pro Rolle, RV-Auszahlung, Local-Mode, Tagessicherung, Monatsabschluss-Archiv, PWA-Setup, DSGVO-Dynamik, 90-Tage-Buchhaltungs-Limit, Running-Shift-Workflow, Auto-Logout (`test-auto-logout.js`: fälscht die Uhr per `page.clock`, damit die Frist nicht real abgewartet werden muss; liest `IDLE_TIMEOUT_MS` aus `app.js`, statt die Zahl zu duplizieren), Formular-Entwurf (`test-shift-draft.js`), Eigentümer-Schlüssel-Migration (`test-owner-migration.js`: lädt Daten im alten Format mit asymmetrischen Raum-Anteilen und prüft, dass sich nach der Migration kein Betrag ändert), Resturlaubs-Erinnerung (`test-urlaub-erinnerung.js`: fälscht die Systemzeit der Seite per `addInitScript`, damit der Test ganzjährig läuft), Rechnungs-Stichtag (`test-calc-cutoff.js`: ab `CALC_V2_FROM_MONTH` = 2026-08 wird jeder Schicht-Betrag EINMAL auf Cent gerundet und alle Summen daraus gebildet — jede Schicht zeigt überall denselben Betrag, Verdienst = Brutto = Zeilensumme; frühere Monate rechnen unverändert wie zuvor).
+Playwright-Tests im Root, mit `node test-*.js` einzeln ausführbar. Decken ab: Tablet-Login-Layout, Tabs pro Rolle, RV-Auszahlung, Local-Mode, Tagessicherung, Monatsabschluss-Archiv, PWA-Setup, DSGVO-Dynamik, 90-Tage-Buchhaltungs-Limit, Running-Shift-Workflow, Auto-Logout (`test-auto-logout.js`: fälscht die Uhr per `page.clock`, damit die Frist nicht real abgewartet werden muss; liest `IDLE_TIMEOUT_MS` aus `app.js`, statt die Zahl zu duplizieren), Formular-Entwurf (`test-shift-draft.js`), Urlaubstage (`test-urlaub.js`: 13-Wochen-Schnitt, eingefrorener Betrag, Restkonto, Konflikt Schicht/Urlaub), Eigentümer-Schlüssel-Migration (`test-owner-migration.js`: lädt Daten im alten Format mit asymmetrischen Raum-Anteilen und prüft, dass sich nach der Migration kein Betrag ändert), Resturlaubs-Erinnerung (`test-urlaub-erinnerung.js`: fälscht die Systemzeit der Seite per `addInitScript`, damit der Test ganzjährig läuft), Rechnungs-Stichtag (`test-calc-cutoff.js`: ab `CALC_V2_FROM_MONTH` = 2026-08 wird jeder Schicht-Betrag EINMAL auf Cent gerundet und alle Summen daraus gebildet — jede Schicht zeigt überall denselben Betrag, Verdienst = Brutto = Zeilensumme; frühere Monate rechnen unverändert wie zuvor).
 
 Ausführung braucht `playwright-core` (`npm i --no-save playwright-core`, lokales Chrome wird genutzt) und einen statischen Server auf `:8080`, der `paralox-stunden.html` ausliefert.
 

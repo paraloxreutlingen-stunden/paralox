@@ -283,8 +283,33 @@
             const cur = oldestMonthByEmp[s.employeeId];
             if (!cur || m < cur) oldestMonthByEmp[s.employeeId] = m;
         });
+        /* Urlaubstage liegen als Einträge in shifts, erkennbar an isVacation.
+         * Sie tragen keine Uhrzeiten und keinen Raum, dafür einen beim
+         * Eintragen eingefrorenen Betrag (urlaubsBetrag). Eingefroren, weil der
+         * 13-Wochen-Durchschnitt mit jeder neuen Schicht wandert — ein laufend
+         * neu gerechneter Wert würde bereits gemeldete Abrechnungen im
+         * Nachhinein verändern. Gleiche Linie wie wageHistory und rvHistorie. */
+        data.shifts.forEach(s => {
+            if (!s) return;
+            s.isVacation = !!s.isVacation;
+            if (!s.isVacation) return;
+            const b = Number(s.urlaubsBetrag);
+            s.urlaubsBetrag = isFinite(b) && b >= 0 ? b : 0;
+            // Urlaubstage haben keine Arbeitszeit und keinen Raum — defensiv
+            // setzen, damit Stundensummen und Raumlogik nie darauf stoßen.
+            s.startTime = '';
+            s.endTime = '';
+            s.room = null;
+            s.secondRoom = null;
+            s.isDouble = false;
+        });
         // Sicherstellen dass jeder Mitarbeiter ein assignedTo hat
         data.employees.forEach(e => {
+            /* Der Urlaubsanspruch wird NICHT gespeichert, sondern aus den
+             * erfassten Schichten gerechnet (siehe urlaubsKonto in app.js).
+             * Ein früher angelegtes manuelles Feld wird daher entfernt, damit
+             * kein veralteter Wert neben der Berechnung stehen bleibt. */
+            delete e.urlaubsanspruch;
             // Migration der alten Eigentümer-Schlüssel (siehe migrateOwnerKeys).
             if (e.assignedTo === 'sandra')        e.assignedTo = 'owner1';
             else if (e.assignedTo === 'benedikt') e.assignedTo = 'owner2';

@@ -335,7 +335,232 @@
         return { single: chosen.single, double: chosen.double };
     }
 
+    // Urlaubstag statt gearbeiteter Schicht.
+    const isVacation = s => !!(s && s.isVacation);
+
+    /* ---------- Urlaubsentgelt ----------
+     *
+     * § 11 BUrlG: Das Urlaubsentgelt bemisst sich nach dem durchschnittlichen
+     * Arbeitsverdienst der letzten 13 Wochen vor Urlaubsbeginn. Bei
+     * unregelmäßiger Beschäftigung — der Regelfall hier — wird durch die
+     * tatsächlich GEARBEITETEN Tage geteilt, nicht durch Kalender- oder
+     * Fünf-Tage-Wochen: Wer zwei Tage pro Woche arbeitet, soll für einen
+     * Urlaubstag das bekommen, was ein normaler Arbeitstag einbringt.
+     *
+     * Frühere Urlaubstage zählen NICHT in die Bemessung — sonst würde sich
+     * Urlaub aus Urlaub speisen und der Satz mit jedem Urlaubstag driften. */
+    const URLAUB_REF_WOCHEN = 13;
+
+    // Datum minus N Tage als ISO YYYY-MM-DD (rein kalendarisch, ohne Zeitzone).
+    function isoMinusDays(iso, days) {
+        const [y, m, d] = iso.split('-').map(Number);
+        const dt = new Date(Date.UTC(y, m - 1, d));
+        dt.setUTCDate(dt.getUTCDate() - days);
+        return dt.toISOString().slice(0, 10);
+    }
+
+    /* Durchschnittlicher Tagesverdienst eines Mitarbeiters für einen Urlaubstag
+     * am Stichtag `datum`. Liefert zusätzlich die Bemessungsgrundlage, damit die
+     * Oberfläche nachvollziehbar machen kann, wie der Betrag zustande kommt.
+     * Ohne gearbeitete Tage im Bezugszeitraum ist kein Durchschnitt bildbar —
+     * dann 0 und tage = 0; der Aufrufer muss das dem Admin sagen. */
+    function urlaubsTagessatz(empId, datum) {
+        const von = isoMinusDays(datum, URLAUB_REF_WOCHEN * 7);
+        const relevant = shifts().filter(s =>
+            s.employeeId === empId &&
+            !isVacation(s) &&
+            s.date >= von && s.date < datum);
+        let summe = 0;
+        const tage = new Set();
+        relevant.forEach(s => {
+            summe += shiftPayAmount(s);
+            tage.add(s.date);
+        });
+        const anzahl = tage.size;
+        return {
+            betrag: anzahl > 0 ? roundHalfUp(summe / anzahl) : 0,
+            summe: roundHalfUp(summe),
+            tage: anzahl,
+            von,
+            bis: isoMinusDays(datum, 1),
+        };
+    }
+
+    /* Urlaubs-Dialog eines Mitarbeiters: Restkonto, bereits eingetragene Tage
+     * und das Formular zum Nachtragen. Der Betrag wird beim Eintragen einmal
+     * berechnet und fest im Datensatz abgelegt; die Vorschau darunter zeigt,
+     * woraus er entsteht, damit der Admin ihn prüfen kann, bevor er ihn setzt. */
+    function openUrlaubModal(empId) {
+        const emp = employees().find(x => x.id === empId);
+        if (!emp) return;
+        const modal = $('#modal');
+        const jahr = new Date().getFullYear();
+
+        const zeichne = () => {
+            const k = urlaubsKonto(empId, jahr);
+            const heute = todayISO();
+            const vorschau = urlaubsTagessatz(empId, heute);
+            const liste = k.tage.length
+                ? k.tage.map(d => {
+                    const s = shifts().find(x => isVacation(x) && x.employeeId === empId && x.date === d);
+                    return `<li>${escapeHtml(fmtDateDE(d))} <span class="muted">— ${fmtEUR(Number(s?.urlaubsBetrag) || 0)}</span>
+                        <button class="btn small danger" data-urlaub-del="${s?.id}">Löschen</button></li>`;
+                }).join('')
+                : '<li class="muted">Noch keine Urlaubstage in diesem Jahr.</li>';
+
+            $('#modalBody').innerHTML = `
+                <div class="stats">
+                    <div class="stat"><div class="label">Anspruch ${jahr}</div><div class="value">${fmtTage(k.anspruch)} Tage</div></div>
+                    <div class="stat"><div class="label">Genommen</div><div class="value">${k.genommen} Tage</div></div>
+                    <div class="stat"><div class="label">Übrig</div><div class="value">${fmtTage(k.rest)} Tage</div></div>
+                </div>
+                <p class="muted small">Anspruch = ${k.arbeitstage} Arbeitstage ÷ 365 × ${URLAUB_WERKTAGE_JAHR} Werktage.
+                   Er wächst mit jeder erfassten Schicht und ist erst zum Jahresende endgültig.</p>
+                <label>Urlaubstag eintragen
+                    <input type="date" id="urlaubDatum" value="${heute}" autocomplete="off">
+                </label>
+                <p class="muted small" id="urlaubVorschau"></p>
+                <h4>Urlaubstage ${jahr}</h4>
+                <ul class="urlaub-liste">${liste}</ul>
+            `;
+
+            // Vorschau des Tagessatzes, sobald das Datum wechselt.
+            const feld = $('#urlaubDatum');
+            const zeigeVorschau = () => {
+                const d = feld.value;
+                const t = d ? urlaubsTagessatz(empId, d) : vorschau;
+                $('#urlaubVorschau').innerHTML = t.tage > 0
+                    ? `Betrag: <strong>${fmtEUR(t.betrag)}</strong> — Durchschnitt aus ${fmtEUR(t.summe)} an ` +
+                      `${t.tage} Arbeitstag${t.tage === 1 ? '' : 'en'} (${fmtDateDE(t.von)} bis ${fmtDateDE(t.bis)}).`
+                    : `<span class="warn-text">Keine Arbeitstage in den ${URLAUB_REF_WOCHEN} Wochen davor — ` +
+                      `der Urlaubstag würde mit 0,00 EUR eingetragen.</span>`;
+            };
+            feld.oninput = zeigeVorschau;
+            feld.onchange = zeigeVorschau;
+            zeigeVorschau();
+
+            $('#modalBody').querySelectorAll('[data-urlaub-del]').forEach(btn => btn.onclick = () => {
+                const id = Number(btn.dataset.urlaubDel);
+                const i = shifts().findIndex(x => x.id === id);
+                if (i === -1) return;
+                state.data.shifts.splice(i, 1);
+                saveData();
+                zeichne();
+                renderEmployees();
+                if (state.activeTab === 'shifts') renderAdminShifts();
+                toast('Urlaubstag gelöscht', 'success');
+            });
+        };
+
+        $('#modalTitle').textContent = `Urlaub — ${emp.name}`;
+        zeichne();
+        modal.classList.remove('hidden');
+
+        const ok = $('#modalOk');
+        const cancel = $('#modalCancel');
+        const schliessen = () => {
+            modal.classList.add('hidden');
+            ok.onclick = null;
+            cancel.onclick = null;
+            ok.textContent = 'OK';
+        };
+        ok.textContent = 'Urlaubstag eintragen';
+        ok.onclick = () => {
+            const datum = $('#urlaubDatum').value;
+            if (!validDate(datum)) { toast('Bitte ein gültiges Datum wählen.', 'error'); return; }
+            // Ein Tag kann nur einmal Urlaub sein.
+            if (shifts().some(s => isVacation(s) && s.employeeId === empId && s.date === datum)) {
+                toast('Für diesen Tag ist bereits Urlaub eingetragen.', 'error');
+                return;
+            }
+            // An einem Tag mit Schicht ist Urlaub widersprüchlich.
+            if (shifts().some(s => !isVacation(s) && s.employeeId === empId && s.date === datum)) {
+                toast('An diesem Tag ist bereits eine Schicht erfasst.', 'error');
+                return;
+            }
+            const t = urlaubsTagessatz(empId, datum);
+            state.data.shifts.push({
+                id: window.ParaloxStorage.nextId(shifts()),
+                employeeId: empId,
+                date: datum,
+                startTime: '',
+                endTime: '',
+                room: null,
+                secondRoom: null,
+                isDouble: false,
+                isVacation: true,
+                // Eingefroren: siehe wageFor(). Der Schnitt wandert mit neuen
+                // Schichten, der gemeldete Betrag darf das nicht.
+                urlaubsBetrag: t.betrag,
+                note: '',
+                createdAt: new Date().toISOString(),
+            });
+            saveData();
+            toast(t.tage > 0
+                ? `Urlaubstag eingetragen: ${fmtEUR(t.betrag)}`
+                : 'Urlaubstag eingetragen — ohne Arbeitstage im Bezugszeitraum mit 0,00 EUR', t.tage > 0 ? 'success' : 'info');
+            zeichne();
+            renderEmployees();
+            if (state.activeTab === 'shifts') renderAdminShifts();
+            if (state.activeTab === 'mine') renderMine();
+        };
+        cancel.onclick = schliessen;
+    }
+
+    /* Voller Jahresurlaub bei durchgehender Beschäftigung, gemessen in Werktagen
+     * (§ 3 BUrlG: 24 Werktage bei Sechs-Tage-Woche). Bezugsgröße der anteiligen
+     * Berechnung unten. */
+    const URLAUB_WERKTAGE_JAHR = 24;
+
+    /* Urlaubskonto eines Mitarbeiters für ein Kalenderjahr.
+     *
+     * Der Anspruch wird NICHT gepflegt, sondern aus den erfassten Schichten
+     * abgeleitet: Arbeitstage im Jahr ÷ 365 × 24 Werktage. Als Arbeitstag zählt
+     * jedes Datum mit mindestens einer Schicht — zwei Schichten am selben Tag
+     * sind ein Arbeitstag. Urlaubstage selbst zählen nicht als Arbeitstage,
+     * sonst würde genommener Urlaub den Anspruch erhöhen.
+     *
+     * Weil die Grundlage mitwächst, steigt der Anspruch im laufenden Jahr mit
+     * jeder erfassten Schicht — unterjährig ist er also naturgemäß ein
+     * Zwischenstand und erst zum Jahresende endgültig. */
+    function urlaubsKonto(empId, jahr) {
+        const j = String(jahr);
+        const eigene = shifts().filter(s => s.employeeId === empId && (s.date || '').slice(0, 4) === j);
+        const arbeitstage = new Set(eigene.filter(s => !isVacation(s)).map(s => s.date)).size;
+        // EINMAL runden, auf die Stelle, in der Urlaubstage auch angezeigt
+        // werden. Erst auf Cent und dann fürs Anzeigen nochmal zu runden würde
+        // 0,8547 über 0,85 zu 0,8 verkürzen — der Rest ginge nicht mehr auf.
+        const anspruch = roundTage(arbeitstage / 365 * URLAUB_WERKTAGE_JAHR);
+        const tage = eigene.filter(isVacation).map(s => s.date).sort();
+        return {
+            anspruch,
+            arbeitstage,
+            genommen: tage.length,
+            rest: roundTage(anspruch - tage.length),
+            tage,
+        };
+    }
+
+    /* Urlaubstage auf eine Nachkommastelle, kaufmännisch gerundet. Eigene
+     * Funktion statt roundHalfUp, weil Tage nicht in Cent gemessen werden. */
+    function roundTage(n) {
+        return Math.round((n + Number.EPSILON) * 10) / 10;
+    }
+
+    /* Tage-Anzeige mit Komma. Nicht über toFixed(1) auf einen bereits
+     * gerundeten Wert, weil 0,85 dort zu "0.8" wird. */
+    function fmtTage(n) {
+        return roundTage(n).toString().replace('.', ',');
+    }
+
     function wageFor(shift) {
+        /* Urlaubstage tragen keine Arbeitszeit. Ihr Betrag steht fest im
+         * Datensatz (beim Eintragen aus dem 13-Wochen-Schnitt berechnet) und
+         * wird NICHT neu gerechnet — sonst würde sich ein bereits gemeldeter
+         * Urlaubstag rückwirkend ändern, sobald neue Schichten dazukommen. */
+        if (isVacation(shift)) {
+            return { minutes: 0, rate: 0, amount: Math.max(0, Number(shift.urlaubsBetrag) || 0) };
+        }
         const rates = wageRatesFor(shift.date);
         const rate = shift.isDouble ? rates.double : rates.single;
         const mins = minutesOf(shift.startTime, shift.endTime);
@@ -344,6 +569,21 @@
 
     function splitCost(shift) {
         const { amount } = wageFor(shift);
+        const factorV = ABGABEN_PCT / 100;
+        /* Urlaubstage hängen an keinem Raum, also greift die Raum-Aufteilung
+         * nicht. Sie werden 50/50 auf die Eigentümer verteilt — dieselbe Regel
+         * wie bei der Monatspauschale, die ebenfalls raumlos ist. */
+        if (isVacation(shift)) {
+            const half = amount / 2;
+            return {
+                total: amount,
+                abgabenPct: ABGABEN_PCT,
+                owner1: half, owner2: half,
+                owner1Base: half, owner2Base: half,
+                owner1Abgaben: half * factorV, owner2Abgaben: half * factorV,
+                owner1Total: half * (1 + factorV), owner2Total: half * (1 + factorV),
+            };
+        }
         const rooms = settings().rooms || {};
         const fallback = { owner1: 50, owner2: 50 };
         const r1 = rooms[shift.room] || fallback;
@@ -381,6 +621,8 @@
     }
 
     function roomsLabel(shift) {
+        // Urlaubstage hängen an keinem Raum — an dieser Stelle steht das Kennwort.
+        if (isVacation(shift)) return '<span class="badge urlaub">Urlaub</span>';
         const primary = `<span class="badge">${shift.room}</span>`;
         if (!shift.isDouble) return primary;
         return `${primary} <span class="muted">+</span> <span class="badge">${secondRoomOf(shift)}</span>`;
@@ -567,6 +809,10 @@
         if (cE <= cS) cE += 1440;
         for (const s of list) {
             if (ignoreId != null && s.id === ignoreId) continue;
+            // Urlaubstage haben keine Uhrzeiten — sie können sich mit nichts
+            // zeitlich überschneiden. Der Konflikt „Schicht am Urlaubstag" wird
+            // separat beim Speichern geprüft, nicht hier über Minuten.
+            if (isVacation(s)) continue;
             if (s.employeeId !== cand.employeeId) continue;
             if (s.date !== cand.date) continue;
             let sS = toMin(s.startTime), sE = toMin(s.endTime);
@@ -598,6 +844,14 @@
         if (p.isDouble) {
             if (!p.secondRoom || !rooms[p.secondRoom]) return 'Zweiter Raum ungültig.';
             if (p.secondRoom === p.room) return 'Zweiter Raum muss anders sein.';
+        }
+        /* An einem Urlaubstag kann nicht zusätzlich gearbeitet werden — sonst
+         * stünden Urlaubsentgelt und Schichtlohn für denselben Tag nebeneinander
+         * und das Brutto wäre doppelt belegt. Hier statt an den Aufrufstellen,
+         * damit alle Wege (Komplett-Speichern, Bearbeiten, Schicht starten)
+         * dieselbe Regel bekommen. */
+        if (shifts().some(s => isVacation(s) && s.employeeId === p.employeeId && s.date === p.date)) {
+            return 'Für diesen Tag ist Urlaub eingetragen — bitte erst den Urlaubstag entfernen.';
         }
         return null;
     }
@@ -1453,16 +1707,18 @@
             tr.dataset.id = s.id;
             tr.innerHTML = `
                 <td>${fmtDateDE(s.date)}</td>
-                <td>${s.startTime}</td>
-                <td>${s.endTime}</td>
-                <td class="num">${fmtHours(w.minutes)}</td>
+                <td>${isVacation(s) ? '<span class="muted">–</span>' : s.startTime}</td>
+                <td>${isVacation(s) ? '<span class="muted">–</span>' : s.endTime}</td>
+                <td class="num">${isVacation(s) ? '<span class="muted">–</span>' : fmtHours(w.minutes)}</td>
                 <td>${roomsLabel(s)}</td>
-                <td>${s.isDouble ? '<span class="badge double">Doppel</span>' : '<span class="badge muted">Einfach</span>'}</td>
+                <td>${isVacation(s)
+                        ? '<span class="badge urlaub">Urlaub</span>'
+                        : (s.isDouble ? '<span class="badge double">Doppel</span>' : '<span class="badge muted">Einfach</span>')}</td>
                 <td class="num">${fmtEUR(w.amount)}</td>
                 <td>${escapeHtml(s.note || '')}</td>
-                <td>${canDelete
+                <td>${canDelete && !isVacation(s)
                     ? `<button class="btn small danger" data-del="${s.id}">Löschen</button>`
-                    : `<span class="muted small" title="Nur am selben Tag möglich">–</span>`}</td>
+                    : `<span class="muted small" title="${isVacation(s) ? 'Urlaub trägt der Admin ein' : 'Nur am selben Tag möglich'}">–</span>`}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -1471,7 +1727,7 @@
         }
         // Monatspauschale: nur wenn beim eigenen User > 0 hinterlegt UND es im
         // gefilterten Zeitraum tatsächlich Schichten gab (sonst kein Lohnanspruch
-        // aus Pauschale — die App führt keine Urlaub/Krankheit-Listen).
+        // aus Pauschale). Krankheitstage führt die App weiterhin nicht.
         const myId = state.user?.id;
         let summaryOut = summaryHtml(list.length, totalMin, totalAmt);
         if (list.length) {
@@ -1489,6 +1745,18 @@
                     `<div class="stat"><div class="label">Pauschale (${pauschaleMonate} ${pauschaleMonate === 1 ? 'Monat' : 'Monate'})</div><div class="value">${fmtEUR(pauschaleTotal)}</div></div>` +
                     `<div class="stat"><div class="label">Brutto inkl. Pauschale</div><div class="value">${fmtEUR(bruttoMitPauschale)}</div></div>`;
             }
+        }
+        /* Urlaubs-Restkonto des angezeigten Jahres. Bezugsjahr ist das gefilterte
+         * Jahr, sonst das laufende — das Konto ist eine Jahresgröße und hat mit
+         * dem Monatsfilter nichts zu tun. */
+        const uJahr = Number(readPeriodYear('#mineYear')) || new Date().getFullYear();
+        const uKonto = urlaubsKonto(myId, uJahr);
+        if (uKonto.anspruch > 0 || uKonto.genommen > 0) {
+            summaryOut +=
+                `<div class="stat"><div class="label">Urlaub ${uJahr} genommen</div>` +
+                `<div class="value">${uKonto.genommen} von ${fmtTage(uKonto.anspruch)}</div></div>` +
+                `<div class="stat"><div class="label">Urlaub übrig</div>` +
+                `<div class="value">${fmtTage(uKonto.rest)} Tage</div></div>`;
         }
         $('#mineSummary').innerHTML = summaryOut;
         tbody.querySelectorAll('[data-del]').forEach(b => {
@@ -1920,11 +2188,13 @@
             tr.innerHTML = `
                 <td>${fmtDateDE(s.date)}</td>
                 <td>${escapeHtml(empName(s.employeeId))}</td>
-                <td>${s.startTime}</td>
-                <td>${s.endTime}</td>
-                <td class="num">${fmtHours(w.minutes)}</td>
+                <td>${isVacation(s) ? '<span class="muted">–</span>' : s.startTime}</td>
+                <td>${isVacation(s) ? '<span class="muted">–</span>' : s.endTime}</td>
+                <td class="num">${isVacation(s) ? '<span class="muted">–</span>' : fmtHours(w.minutes)}</td>
                 <td>${roomsLabel(s)}</td>
-                <td>${s.isDouble ? '<span class="badge double">Doppel</span>' : '<span class="badge muted">Einfach</span>'}</td>
+                <td>${isVacation(s)
+                        ? '<span class="badge urlaub">Urlaub</span>'
+                        : (s.isDouble ? '<span class="badge double">Doppel</span>' : '<span class="badge muted">Einfach</span>')}</td>
                 <td class="num">${fmtEUR(show.amount)}</td>
                 <td class="num">${fmtEUR(show.owner1)}</td>
                 <td class="num">${fmtEUR(show.owner2)}</td>
@@ -2165,8 +2435,11 @@
             const hours = w.minutes / 60;
             tot.hours += hours;
             tot.amt += show.amount; tot.sBase += show.owner1; tot.bBase += show.owner2;
-            const sec = secondRoomOf(s);
-            const r1name = settings().rooms[s.room]?.name || '';
+            // Urlaubstage haben keinen Raum; in den Raum-Spalten steht das
+            // Kennwort, damit die Zeile in der Auswertung eindeutig ist.
+            const urlaub = isVacation(s);
+            const sec = urlaub ? null : secondRoomOf(s);
+            const r1name = urlaub ? 'Urlaub' : (settings().rooms[s.room]?.name || '');
             const r2name = sec ? (settings().rooms[sec]?.name || '') : '';
             // Status des MONATS dieser Schicht, nicht der aktuelle Status des
             // Mitarbeiters — sonst würde ein Statuswechsel alte Zeilen umschreiben.
@@ -2174,9 +2447,9 @@
             const shiftPay = perShift.get(s.id) || { rvAnteil: 0, auszahlung: show.amount };
             rows.push([
                 s.date, empName(s.employeeId), s.startTime, s.endTime,
-                hours.toFixed(2), s.room, sec || '',
+                hours.toFixed(2), urlaub ? 'URLAUB' : s.room, sec || '',
                 sec ? `${r1name} + ${r2name}` : r1name,
-                s.isDouble ? 'Doppel' : 'Einfach',
+                urlaub ? 'Urlaub' : (s.isDouble ? 'Doppel' : 'Einfach'),
                 w.rate.toFixed(2), show.amount.toFixed(2),
                 befreit ? '0,00' : shiftPay.rvAnteil.toFixed(2),
                 shiftPay.auszahlung.toFixed(2),
@@ -2470,6 +2743,12 @@
             const shownAmounts = list.map(s => shiftPayAmount(s));
             const body = list.map((s, i) => {
                 const w = wages[i];
+                // Urlaubstage sind eigene Zeilen: keine Uhrzeiten, keine Stunden,
+                // kein Stundenlohn — nur Datum, Kennwort und Betrag.
+                if (isVacation(s)) {
+                    return [fmtDateDE(s.date), 'Urlaub', '', '', '',
+                            shownAmounts[i].toFixed(2).replace('.', ',') + ' EUR'];
+                }
                 return [
                     fmtDateDE(s.date),
                     s.startTime,
@@ -2507,19 +2786,33 @@
             const pauschale = monatspauschaleForMonth(emp.id, pdfMonth);
             const bruttoGesamt = totalAmt + pauschale;
 
+            // Urlaubsentgelt getrennt ausweisen, damit die Lohnabrechnung zeigt,
+            // welcher Teil des Brutto nicht aus geleisteter Arbeit stammt.
+            let urlaubAmt = 0, urlaubTage = 0;
+            list.forEach((s, i) => { if (isVacation(s)) { urlaubAmt += shownAmounts[i]; urlaubTage += 1; } });
+            const schichtAmt = roundHalfUp(totalAmt - urlaubAmt);
+
             let yAfter = doc.lastAutoTable.finalY + 20;
             doc.setFontSize(11);
-            if (pauschale > 0) {
+            if (pauschale > 0 || urlaubTage > 0) {
                 doc.text(`Lohn aus Schichten:`, 40, yAfter);
                 doc.text(`${(totalMin / 60).toFixed(2).replace('.', ',')} Std`, 300, yAfter, { align: 'right' });
-                doc.text(`${fmtEUR(totalAmt)}`, 540, yAfter, { align: 'right' });
-                doc.text(`+ Monatspauschale:`, 40, yAfter + 16);
-                doc.text(`${fmtEUR(pauschale)}`, 540, yAfter + 16, { align: 'right' });
-                yAfter += 32;
+                doc.text(`${fmtEUR(schichtAmt)}`, 540, yAfter, { align: 'right' });
+                yAfter += 16;
+                if (urlaubTage > 0) {
+                    doc.text(`+ Urlaubsentgelt (${urlaubTage} Tag${urlaubTage === 1 ? '' : 'e'}):`, 40, yAfter);
+                    doc.text(`${fmtEUR(roundHalfUp(urlaubAmt))}`, 540, yAfter, { align: 'right' });
+                    yAfter += 16;
+                }
+                if (pauschale > 0) {
+                    doc.text(`+ Monatspauschale:`, 40, yAfter);
+                    doc.text(`${fmtEUR(pauschale)}`, 540, yAfter, { align: 'right' });
+                    yAfter += 16;
+                }
             }
             doc.setFont(undefined, 'bold');
             doc.text(`Brutto-Lohn:`, 40, yAfter);
-            if (pauschale === 0) {
+            if (pauschale === 0 && urlaubTage === 0) {
                 doc.text(`${(totalMin / 60).toFixed(2).replace('.', ',')} Std`, 300, yAfter, { align: 'right' });
             }
             doc.text(`${fmtEUR(bruttoGesamt)}`, 540, yAfter, { align: 'right' });
@@ -2550,8 +2843,22 @@
             doc.text(fmtEUR(p.auszahlung), 540, yAfter + 38, { align: 'right' });
             doc.setFont(undefined, 'normal');
 
+            /* Urlaubs-Restkonto des Kalenderjahres, zu dem der abgerechnete
+             * Monat gehört. Steht auf jeder Seite, damit Mitarbeiter und
+             * Buchhaltung den Stand ohne Rückfrage sehen. */
+            const kJahr = Number((month || (list[0]?.date || '')).slice(0, 4));
+            const konto = urlaubsKonto(emp.id, kJahr);
+            doc.setFontSize(10); doc.setTextColor(90);
+            doc.text(
+                `Urlaub ${kJahr}: ${konto.genommen} von ${fmtTage(konto.anspruch)} Tagen genommen, ` +
+                `${fmtTage(konto.rest)} übrig ` +
+                `(Anspruch anteilig: ${konto.arbeitstage} Arbeitstage ÷ 365 × ${URLAUB_WERKTAGE_JAHR}).`,
+                40, yAfter + 58
+            );
+            doc.setTextColor(0);
+
             // Erläuterung zur Mindestbeitragsbemessung, wenn aktiv.
-            let infoY = yAfter + 60;
+            let infoY = yAfter + 80;
             if (!befreit && p.mindestGreift) {
                 doc.setFontSize(9); doc.setTextColor(120);
                 doc.text(
@@ -2641,6 +2948,7 @@
                     <button class="btn small" data-emp-pw="${e.id}">Passwort</button>
                     <button class="btn small" data-emp-assign="${e.id}">Arbeitgeber wechseln</button>
                     <button class="btn small" data-emp-pauschale="${e.id}">Pauschale ändern</button>
+                    <button class="btn small" data-emp-urlaub="${e.id}">Urlaub</button>
                     <button class="btn small" data-emp-admin="${e.id}">${e.isAdmin ? 'Admin entziehen' : 'Admin geben'}</button>
                     <button class="btn small" data-emp-acc="${e.id}">${e.isAccountant ? 'Buchhaltung entziehen' : 'Buchhaltung geben'}</button>
                     <button class="btn small" data-emp-rv="${e.id}">RV-Status ändern</button>
@@ -2746,6 +3054,9 @@
             saveData();
             renderEmployees();
             toast(`Ab ${ab}: ${befreit ? 'RV-befreit' : 'RV-pflichtig'}`, 'success');
+        });
+        tbody.querySelectorAll('[data-emp-urlaub]').forEach(b => b.onclick = () => {
+            openUrlaubModal(Number(b.dataset.empUrlaub));
         });
         tbody.querySelectorAll('[data-emp-pauschale]').forEach(b => b.onclick = async () => {
             const emp = employees().find(x => x.id === Number(b.dataset.empPauschale));
