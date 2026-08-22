@@ -135,6 +135,15 @@
   }
 
   function wageFor(db, shift) {
+    /* Urlaubstage tragen keine Uhrzeiten; ihr Betrag steht fest im Datensatz.
+     * Ohne diesen Zweig ergäbe minutesOf('', '') NaN und das gesamte
+     * Monatsbrutto würde still zu NaN — der Bericht sähe dann leer statt
+     * falsch aus. Urlaub gibt es zwar erst ab August 2026 und damit nach dem
+     * hier untersuchten Zeitraum, aber das Werkzeug muss auch stimmen, wenn
+     * jemand den Zeitraum weiter fasst. */
+    if (shift && shift.isVacation) {
+      return { minutes: 0, rate: 0, amount: Math.max(0, Number(shift.urlaubsBetrag) || 0) };
+    }
     const rates = wageRatesFor(db, shift.date);
     const rate = shift.isDouble ? rates.double : rates.single;
     const mins = minutesOf(shift.startTime, shift.endTime);
@@ -278,6 +287,11 @@
         // Der Monat wurde zu Beginn des Folgemonats abgerechnet; lag das noch
         // vor dem 29.04.2026, gab es damals gar keinen RV-Abzug.
         keinAbzugDamals: naechsterMonatsErster(g.month) < RV_ABZUG_AB_DATUM,
+        /* Lief die Abrechnung erst NACH dem Fix, hat die App den Mindestbeitrag
+         * bereits richtig gerechnet. Eine hier ausgewiesene Differenz ist dann
+         * rein rechnerisch und KEINE Nachmeldung — ohne diese Unterscheidung
+         * würde ein geweiteter Zeitraum falsche Nachforderungen vortäuschen. */
+        bereitsKorrekt: naechsterMonatsErster(g.month) >= FIX_AB_DATUM,
         brutto: neu.brutto,
         rvAlt: alt.rvAnteil,
         rvNeu: neu.rvAnteil,
@@ -299,7 +313,13 @@
   }
 
   function render(rows, von, bis) {
-    const betroffen = rows.filter(r => Math.abs(r.diff) >= 0.005);
+    /* Nur Monate, die VOR dem Fix abgerechnet wurden, sind echte Nachmeldungen.
+     * Spätere Monate rechnete die App bereits richtig; ihre rechnerische
+     * Differenz wird getrennt ausgewiesen, damit sie nicht in die Summe der
+     * Nachforderung einfließt. */
+    const abweichend = rows.filter(r => Math.abs(r.diff) >= 0.005);
+    const betroffen = abweichend.filter(r => !r.bereitsKorrekt);
+    const nurRechnerisch = abweichend.filter(r => r.bereitsKorrekt);
     const summe = roundHalfUp(betroffen.reduce((s, r) => s + r.diff, 0));
     const vorAbzug = rows.filter(r => r.keinAbzugDamals && !r.befreit);
 
@@ -335,6 +355,14 @@
               `${fmt(MIN_BEITRAG_GESAMT_EUR)} (18,6&nbsp;% aus 175&nbsp;EUR) abzüglich 15&nbsp;% ` +
               'AG-Pauschale vom tatsächlichen Brutto.</p>';
       html += '<p><button class="ghost" id="csv">Als CSV speichern</button></p></div>';
+    }
+
+    if (nurRechnerisch.length) {
+      html += '<div class="card ok"><strong>Keine Nachmeldung nötig:</strong> ' +
+              `${nurRechnerisch.length} weitere Mitarbeiter-Monat(e) im gewählten Zeitraum wurden erst ` +
+              `nach dem ${FIX_AB_DATUM.split('-').reverse().join('.')} abgerechnet — dort hat die App den ` +
+              'Mindestbeitrag bereits richtig berechnet. Sie erscheinen nur zum Vergleich: ' +
+              esc(nurRechnerisch.map(r => `${r.name} (${monthLabel(r.month)})`).join(', ')) + '.</div>';
     }
 
     if (vorAbzug.length) {
