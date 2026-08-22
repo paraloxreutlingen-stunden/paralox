@@ -48,6 +48,7 @@ Urlaubstage liegen **als Einträge in `shifts`** mit `isVacation: true` — nich
 | `generate-icons.js` | Icon-Generator |
 | `test-*.js` | Playwright-Tests (siehe unten) |
 | `SETUP.md` | OneDrive-Setup-Anleitung (für den Fall der Reaktivierung) |
+| `LICENSE` | „Alle Rechte vorbehalten" — der Code ist öffentlich einsehbar, aber nicht zur Nutzung freigegeben. Ausgenommen: `vendor/msal-browser.min.js` (MIT, Microsoft) und die per CDN geladenen Bibliotheken. Bei neuem Fremdcode im Repo hier ergänzen |
 
 ## Build
 

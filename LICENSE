@@ -1,0 +1,79 @@
+Copyright (c) 2026 Paralox
+Alle Rechte vorbehalten. / All rights reserved.
+
+================================================================
+DEUTSCH
+================================================================
+
+Dieser Quellcode ist oeffentlich einsehbar, aber NICHT zur Nutzung
+freigegeben.
+
+Ohne vorherige schriftliche Zustimmung des Rechteinhabers sind
+insbesondere nicht gestattet:
+
+  - Vervielfaeltigung des Codes, ganz oder in Teilen
+  - Veraenderung oder Erstellung abgeleiteter Werke
+  - Verbreitung, Veroeffentlichung oder Weitergabe
+  - Betrieb der Anwendung, auch zu nicht-kommerziellen Zwecken
+  - Nutzung des Codes als Vorlage fuer eigene Software
+
+Das Ansehen des Codes sowie das Forken innerhalb von GitHub im
+Rahmen der GitHub-Nutzungsbedingungen bleiben hiervon unberuehrt.
+
+Die Software wird ohne jede Gewaehrleistung bereitgestellt. Eine
+Haftung fuer Schaeden aus ihrer Verwendung ist ausgeschlossen.
+
+Anfragen zur Nutzung richten Sie bitte an den Rechteinhaber ueber
+das GitHub-Konto, unter dem dieses Repository veroeffentlicht ist.
+
+================================================================
+ENGLISH
+================================================================
+
+This source code is publicly visible but NOT licensed for use.
+
+Without prior written permission from the copyright holder, the
+following are not permitted:
+
+  - copying the code, in whole or in part
+  - modifying it or creating derivative works
+  - distributing, publishing or passing it on
+  - running the application, including for non-commercial purposes
+  - using the code as a template for other software
+
+Viewing the code and forking it within GitHub under the GitHub
+Terms of Service are unaffected by the above.
+
+The software is provided without any warranty. Liability for
+damages arising from its use is excluded.
+
+For licensing enquiries, please contact the copyright holder via
+the GitHub account this repository is published under.
+
+================================================================
+DRITTKOMPONENTEN / THIRD-PARTY COMPONENTS
+================================================================
+
+Die vorstehenden Bedingungen gelten NICHT fuer mitgelieferten
+Fremdcode. Dieser steht weiterhin unter seiner eigenen Lizenz:
+
+The terms above do NOT apply to bundled third-party code, which
+remains under its own licence:
+
+  vendor/msal-browser.min.js
+      Microsoft Authentication Library for JavaScript (MSAL.js)
+      (c) Microsoft Corporation - MIT License
+      https://github.com/AzureAD/microsoft-authentication-library-for-js
+
+Zur Laufzeit laedt die Anwendung zusaetzlich folgende
+Bibliotheken von einem CDN nach. Sie sind nicht Bestandteil
+dieses Repositorys und stehen unter ihren eigenen Lizenzen:
+
+At runtime the application additionally loads the following
+libraries from a CDN. They are not part of this repository and
+are covered by their own licences:
+
+  SheetJS (xlsx)        - Apache-2.0
+  jsPDF                 - MIT
+  jsPDF-AutoTable       - MIT
+  bcryptjs              - MIT
