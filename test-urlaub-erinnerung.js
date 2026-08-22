@@ -84,6 +84,33 @@ async function seedEmployee(page, { id, name, isAccountant = false, isAdmin = fa
     }, { id, name, isAccountant, isAdmin });
 }
 
+/* Gibt allen vorhandenen Mitarbeitern einen offenen Resturlaub aus dem
+ * Vorjahr: 26 Arbeitstage ergeben nach § 9 der Rahmenvereinbarung 2,0 Tage
+ * Anspruch, davon nichts genommen. Seit die App den Urlaub tatsächlich führt,
+ * erscheint die Erinnerung nur bei offenen Tagen — ohne diese Grundlage gäbe
+ * es schlicht nichts zu erinnern. Muss NACH seedEmployee laufen, damit auch
+ * nachgelegte Mitarbeiter Anspruch haben. */
+async function seedUebertrag(page, vorjahr) {
+    await page.evaluate((jahr) => {
+        const data = JSON.parse(localStorage.getItem('paraloxStunden.v1'));
+        const raum = Object.keys(data.settings.rooms)[0];
+        let id = 10000;
+        data.employees.forEach(e => {
+            for (let i = 0; i < 26; i++) {
+                const d = new Date(Date.UTC(jahr, 0, 6));
+                d.setUTCDate(d.getUTCDate() + i * 7);
+                data.shifts.push({
+                    id: ++id, employeeId: e.id, date: d.toISOString().slice(0, 10),
+                    startTime: '08:00', endTime: '13:00', room: raum,
+                    secondRoom: null, isDouble: false, isVacation: false,
+                    note: '', createdAt: '2020-01-01T00:00:00.000Z',
+                });
+            }
+        });
+        localStorage.setItem('paraloxStunden.v1', JSON.stringify(data));
+    }, vorjahr);
+}
+
 async function login(page, name) {
     await page.evaluate((n) => {
         const sel = document.getElementById('loginName');
@@ -117,6 +144,7 @@ async function readModal(page) {
     {
         const page = await openApp(browser, '2027-04-02');
         await seedMarkers(page);
+        await seedUebertrag(page, 2026);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(400);
 
@@ -138,6 +166,7 @@ async function readModal(page) {
     {
         const page = await openApp(browser, '2027-04-02');
         await seedMarkers(page);
+        await seedUebertrag(page, 2026);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(400);
         await login(page, 'Admin');
@@ -152,6 +181,7 @@ async function readModal(page) {
         check('Marker als User-ID-Map mit Zeitstempel gespeichert (Admin = id 1)',
             !!map['1'] && /^2027-\d{2}-\d{2}T/.test(map['1']), JSON.stringify(map));
 
+        await seedUebertrag(page, 2026);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(800);
         s = await readModal(page);
@@ -166,6 +196,7 @@ async function readModal(page) {
                                   ['2027-12-15', 'Dezember']]) {
         const page = await openApp(browser, datum);
         await seedMarkers(page);
+        await seedUebertrag(page, Number(datum.slice(0, 4)) - 1);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(400);
         await login(page, 'Admin');
@@ -179,6 +210,7 @@ async function readModal(page) {
     {
         const page = await openApp(browser, '2027-03-30');
         await seedMarkers(page);
+        await seedUebertrag(page, 2026);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(400);
         await login(page, 'Admin');
@@ -190,6 +222,7 @@ async function readModal(page) {
     {
         const page = await openApp(browser, '2027-06-30');
         await seedMarkers(page);
+        await seedUebertrag(page, 2026);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(400);
         await login(page, 'Admin');
@@ -203,6 +236,7 @@ async function readModal(page) {
     {
         const page = await openApp(browser, '2028-04-02');
         await seedMarkers(page, { vacation: { '1': '2027-04-02T09:00:00.000Z' } });
+        await seedUebertrag(page, 2027);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(400);
         await login(page, 'Admin');
@@ -224,6 +258,7 @@ async function readModal(page) {
             m['98'] = '2020-01-01T00:00:00.000Z';
             localStorage.setItem('paraloxStunden.dsgvoAccepted', JSON.stringify(m));
         });
+        await seedUebertrag(page, 2026);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(400);
 
@@ -257,6 +292,7 @@ async function readModal(page) {
             localStorage.removeItem('paraloxStunden.dsgvoAccepted');
             localStorage.removeItem('paraloxStunden.vacationReminder');
         });
+        await seedUebertrag(page, 2026);
         await page.reload({ waitUntil: 'networkidle' });
         await page.waitForTimeout(400);
         await login(page, 'Admin');

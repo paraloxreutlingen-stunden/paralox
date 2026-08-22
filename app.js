@@ -364,7 +364,25 @@
      * Oberfläche nachvollziehbar machen kann, wie der Betrag zustande kommt.
      * Ohne gearbeitete Tage im Bezugszeitraum ist kein Durchschnitt bildbar —
      * dann 0 und tage = 0; der Aufrufer muss das dem Admin sagen. */
+    /* Erster Tag des zusammenhängenden Urlaubsblocks, in den `datum` fällt.
+     * § 9 der Rahmenvereinbarung bemisst nach den 13 Wochen vor dem
+     * URLAUBSANTRITT — bei einem durchgehenden Urlaub gilt also für alle Tage
+     * derselbe Satz. Ohne das bekäme jeder Tag ein leicht verschobenes Fenster
+     * und ein zusammenhängender Urlaub stünde mit mehreren Beträgen im PDF. */
+    function urlaubsAntritt(empId, datum) {
+        let antritt = datum;
+        for (;;) {
+            const davor = isoMinusDays(antritt, 1);
+            const belegt = shifts().some(s =>
+                isVacation(s) && s.employeeId === empId && s.date === davor);
+            if (!belegt) return antritt;
+            antritt = davor;
+        }
+    }
+
     function urlaubsTagessatz(empId, datum) {
+        // Nicht vom einzelnen Tag aus rechnen, sondern vom Urlaubsantritt.
+        datum = urlaubsAntritt(empId, datum);
         const von = isoMinusDays(datum, URLAUB_REF_WOCHEN * 7);
         const relevant = shifts().filter(s =>
             s.employeeId === empId &&
@@ -408,14 +426,26 @@
                 }).join('')
                 : '<li class="muted">Noch keine Urlaubstage in diesem Jahr.</li>';
 
+            const uebertragStat = k.uebertragBrutto > 0
+                ? `<div class="stat"><div class="label">Übertrag aus ${jahr - 1}</div><div class="value">${
+                    k.uebertragVerfallen
+                        ? `<span class="muted">${fmtTage(k.uebertragBrutto)} verfallen</span>`
+                        : `${fmtTage(k.uebertrag)} Tage`}</div></div>`
+                : '';
             $('#modalBody').innerHTML = `
                 <div class="stats">
                     <div class="stat"><div class="label">Anspruch ${jahr}</div><div class="value">${fmtTage(k.anspruch)} Tage</div></div>
+                    ${uebertragStat}
                     <div class="stat"><div class="label">Genommen</div><div class="value">${k.genommen} Tage</div></div>
                     <div class="stat"><div class="label">Übrig</div><div class="value">${fmtTage(k.rest)} Tage</div></div>
                 </div>
-                <p class="muted small">Anspruch = ${k.arbeitstage} Arbeitstage ÷ 365 × ${URLAUB_WERKTAGE_JAHR} Werktage.
-                   Er wächst mit jeder erfassten Schicht und ist erst zum Jahresende endgültig.</p>
+                <p class="muted small">Anspruch = ${k.arbeitstage} Arbeitstage ÷ ${URLAUB_TEILER} (§ 9 Rahmenvereinbarung).
+                   Er wächst mit jeder erfassten Schicht und ist erst zum Jahresende endgültig.${
+                    k.uebertragBrutto > 0
+                        ? k.uebertragVerfallen
+                            ? ` Der Übertrag aus ${jahr - 1} ist zum 30. Juni ${jahr} verfallen.`
+                            : ` Der Übertrag aus ${jahr - 1} verfällt zum 30. Juni ${jahr}.`
+                        : ''}</p>
                 <label>Urlaubstag eintragen
                     <input type="date" id="urlaubDatum" value="${heute}" autocomplete="off">
                 </label>
@@ -507,10 +537,19 @@
         cancel.onclick = schliessen;
     }
 
-    /* Voller Jahresurlaub bei durchgehender Beschäftigung, gemessen in Werktagen
-     * (§ 3 BUrlG: 24 Werktage bei Sechs-Tage-Woche). Bezugsgröße der anteiligen
-     * Berechnung unten. */
-    const URLAUB_WERKTAGE_JAHR = 24;
+    /* Teiler der Urlaubsformel aus § 9 der Rahmenvereinbarung:
+     * geleistete Arbeitstage im Kalenderjahr ÷ 13 = Urlaubstage.
+     *
+     * Deckt sich mit dem gesetzlichen Mindesturlaub: § 3 BUrlG nennt 24
+     * Werktage bei Sechs-Tage-Woche, das Jahr hat 313 Werktage, und
+     * 313 / 24 = 13,04. Zwei Arbeitstage pro Woche (104 im Jahr) ergeben
+     * damit 8,0 Tage, fünf (261) ergeben 20,1 — genau die gesetzlichen Werte. */
+    const URLAUB_TEILER = 13;
+
+    /* Resturlaub aus dem Vorjahr verfällt zum 30. Juni des Folgejahres
+     * (§ 9 Rahmenvereinbarung, abweichend von der sonst üblichen Frist zum
+     * 31. März). Gleicher Stichtag wie das Ende des Erinnerungsfensters. */
+    const URLAUB_VERFALL_MMDD = '06-30';
 
     /* Urlaubskonto eines Mitarbeiters für ein Kalenderjahr.
      *
@@ -523,21 +562,59 @@
      * Weil die Grundlage mitwächst, steigt der Anspruch im laufenden Jahr mit
      * jeder erfassten Schicht — unterjährig ist er also naturgemäß ein
      * Zwischenstand und erst zum Jahresende endgültig. */
-    function urlaubsKonto(empId, jahr) {
+    /* Anspruch und genommene Tage EINES Kalenderjahres, ohne Übertrag.
+     * Basis für urlaubsKonto() und für die Übertragsrechnung des Folgejahres. */
+    function urlaubsJahr(empId, jahr) {
         const j = String(jahr);
         const eigene = shifts().filter(s => s.employeeId === empId && (s.date || '').slice(0, 4) === j);
+        // Ein Arbeitstag ist jeder Kalendertag mit mindestens einem Einsatz —
+        // unabhängig davon, wie viele Räume oder Schichten an dem Tag lagen
+        // (§ 9 Rahmenvereinbarung). Deshalb ein Set über die Daten.
         const arbeitstage = new Set(eigene.filter(s => !isVacation(s)).map(s => s.date)).size;
         // EINMAL runden, auf die Stelle, in der Urlaubstage auch angezeigt
         // werden. Erst auf Cent und dann fürs Anzeigen nochmal zu runden würde
         // 0,8547 über 0,85 zu 0,8 verkürzen — der Rest ginge nicht mehr auf.
-        const anspruch = roundTage(arbeitstage / 365 * URLAUB_WERKTAGE_JAHR);
+        const anspruch = roundTage(arbeitstage / URLAUB_TEILER);
         const tage = eigene.filter(isVacation).map(s => s.date).sort();
+        return { anspruch, arbeitstage, genommen: tage.length, tage };
+    }
+
+    /* Urlaubskonto eines Mitarbeiters für ein Kalenderjahr, inklusive Übertrag
+     * aus dem Vorjahr.
+     *
+     * Resturlaub des Vorjahres bleibt bis zum 30. Juni nutzbar und verfällt
+     * danach. Genommene Tage zehren zuerst den Übertrag auf, weil er zuerst
+     * verfällt — sonst verlöre der Mitarbeiter Tage, die er faktisch schon
+     * genommen hat.
+     *
+     * Der Übertrag wird aus dem reinen Vorjahressaldo gebildet (Anspruch minus
+     * genommen), nicht rekursiv über beliebig viele Jahre: ein Übertrag, der
+     * selbst schon einmal verfallen ist, lebt nicht wieder auf.
+     *
+     * bezugsdatum steuert, ob der Übertrag noch gilt — normalerweise heute;
+     * für Auswertungen vergangener Zeiträume kann der Aufrufer ein anderes
+     * Datum setzen, damit ein altes PDF nicht plötzlich anders aussieht. */
+    function urlaubsKonto(empId, jahr, bezugsdatum) {
+        const j = Number(jahr);
+        const heuer = urlaubsJahr(empId, j);
+        const vorjahr = urlaubsJahr(empId, j - 1);
+        const uebertragBrutto = Math.max(0, roundTage(vorjahr.anspruch - vorjahr.genommen));
+
+        const stichtag = `${j}-${URLAUB_VERFALL_MMDD}`;
+        const heute = bezugsdatum || todayISO();
+        // Verfallen ist der Übertrag erst NACH dem Stichtag; am 30. Juni selbst
+        // kann noch genommen werden.
+        const uebertragVerfallen = heute > stichtag;
+        const uebertrag = uebertragVerfallen ? 0 : uebertragBrutto;
+
+        const rest = roundTage(heuer.anspruch + uebertrag - heuer.genommen);
         return {
-            anspruch,
-            arbeitstage,
-            genommen: tage.length,
-            rest: roundTage(anspruch - tage.length),
-            tage,
+            ...heuer,
+            uebertrag,
+            uebertragBrutto,
+            uebertragVerfallen,
+            verfallStichtag: stichtag,
+            rest,
         };
     }
 
@@ -945,7 +1022,19 @@
         if (monthDay < VACATION_REMINDER_FROM || monthDay > VACATION_REMINDER_UNTIL) return false;
         // Quittierung zählt nur für das Jahr, in dem sie erfolgt ist.
         const ack = window.ParaloxStorage.getVacationReminderAck(state.user.id);
-        return !(ack && ack.slice(0, 4) === year);
+        if (ack && ack.slice(0, 4) === year) return false;
+        /* Nur wer wirklich noch etwas zu verlieren hat. Vor der Urlaubsführung
+         * konnte die App das nicht wissen und hat pauschal alle erinnert; jetzt
+         * kennt sie den Übertrag und behelligt niemanden ohne offene Tage. */
+        return offenerUebertrag(state.user.id) > 0;
+    }
+
+    /* Noch offener Urlaub aus dem VORJAHR — das ist der Teil, der zum 30. Juni
+     * verfällt. Der Anspruch des laufenden Jahres bleibt davon unberührt und
+     * ist deshalb kein Grund für die Erinnerung. */
+    function offenerUebertrag(empId) {
+        const jahr = Number(todayISO().slice(0, 4));
+        return urlaubsKonto(empId, jahr).uebertrag;
     }
 
     function maybeShowVacationReminder() {
@@ -955,11 +1044,15 @@
             modal.classList.add('hidden');
             return false;
         }
-        const year = todayISO().slice(0, 4);
+        const year = Number(todayISO().slice(0, 4));
+        const k = urlaubsKonto(state.user.id, year);
+        const tage = fmtTage(k.uebertrag);
+        const wort = k.uebertrag === 1 ? 'Urlaubstag' : 'Urlaubstage';
         $('#vacationReminderText').innerHTML =
             `<p>Hallo ${escapeHtml(state.user.name)},</p>` +
-            `<p>bitte denk daran, deine eventuell noch bestehenden <strong>Urlaubstage bis spätestens 30. Juni ${year}</strong> zu nehmen.</p>` +
-            '<p>Nicht genommener Resturlaub <strong>verfällt</strong> danach.</p>' +
+            `<p>aus ${year - 1} hast du noch <strong>${tage} ${wort}</strong> offen. ` +
+            `Diese musst du <strong>bis zum 30. Juni ${year}</strong> nehmen — danach <strong>verfallen</strong> sie.</p>` +
+            `<p>Dein Anspruch für ${year} wächst davon unabhängig weiter und verfällt erst zum 30. Juni ${year + 1}.</p>` +
             '<p>Bitte sprich deine Urlaubsplanung rechtzeitig mit der Betriebsleitung ab.</p>';
         modal.classList.remove('hidden');
         return true;
@@ -1751,10 +1844,17 @@
          * dem Monatsfilter nichts zu tun. */
         const uJahr = Number(readPeriodYear('#mineYear')) || new Date().getFullYear();
         const uKonto = urlaubsKonto(myId, uJahr);
-        if (uKonto.anspruch > 0 || uKonto.genommen > 0) {
+        if (uKonto.anspruch > 0 || uKonto.genommen > 0 || uKonto.uebertragBrutto > 0) {
             summaryOut +=
                 `<div class="stat"><div class="label">Urlaub ${uJahr} genommen</div>` +
-                `<div class="value">${uKonto.genommen} von ${fmtTage(uKonto.anspruch)}</div></div>` +
+                `<div class="value">${uKonto.genommen} von ${fmtTage(uKonto.anspruch)}</div></div>`;
+            if (uKonto.uebertrag > 0) {
+                summaryOut +=
+                    `<div class="stat"><div class="label">Übertrag aus ${uJahr - 1}` +
+                    `<br><span class="small">verfällt 30.06.</span></div>` +
+                    `<div class="value">${fmtTage(uKonto.uebertrag)} Tage</div></div>`;
+            }
+            summaryOut +=
                 `<div class="stat"><div class="label">Urlaub übrig</div>` +
                 `<div class="value">${fmtTage(uKonto.rest)} Tage</div></div>`;
         }
@@ -2849,10 +2949,13 @@
             const kJahr = Number((month || (list[0]?.date || '')).slice(0, 4));
             const konto = urlaubsKonto(emp.id, kJahr);
             doc.setFontSize(10); doc.setTextColor(90);
+            const uebertragTxt = konto.uebertrag > 0
+                ? ` + ${fmtTage(konto.uebertrag)} Übertrag aus ${kJahr - 1} (verfällt 30.06.${kJahr})`
+                : '';
             doc.text(
-                `Urlaub ${kJahr}: ${konto.genommen} von ${fmtTage(konto.anspruch)} Tagen genommen, ` +
+                `Urlaub ${kJahr}: ${konto.genommen} von ${fmtTage(konto.anspruch)} Tagen genommen${uebertragTxt}, ` +
                 `${fmtTage(konto.rest)} übrig ` +
-                `(Anspruch anteilig: ${konto.arbeitstage} Arbeitstage ÷ 365 × ${URLAUB_WERKTAGE_JAHR}).`,
+                `(Anspruch: ${konto.arbeitstage} Arbeitstage ÷ ${URLAUB_TEILER}).`,
                 40, yAfter + 58
             );
             doc.setTextColor(0);

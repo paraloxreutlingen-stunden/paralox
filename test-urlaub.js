@@ -5,7 +5,8 @@
  *  - Der Betrag ist eingefroren: spätere Schichten verändern ihn NICHT
  *  - In der Schichtliste steht "Urlaub" statt einem Raum, ohne Stunden
  *  - Urlaubsentgelt zählt zum Brutto
- *  - Restkonto: Arbeitstage ÷ 365 × 24 Werktage, genommen, übrig
+ *  - Restkonto: Arbeitstage ÷ 13 (§ 9 Rahmenvereinbarung), genommen, übrig
+ *  - Zusammenhängender Urlaub: derselbe Satz für alle Tage (Urlaubsantritt)
  *  - An einem Urlaubstag lässt sich keine Schicht erfassen (und umgekehrt)
  *
  * Läuft gegen Test-Daten, nicht gegen die produktiven Daten.
@@ -41,8 +42,8 @@ const AUSSERHALB = ['2026-01-13', '2026-01-20', '2026-01-27'];
 const ERWARTETER_TAGESSATZ = 50;
 const FALSCH_WENN_ALLES = Math.round((500 + 300) / 13 * 100) / 100;   // 61,54
 const ARBEITSTAGE = IM_ZEITRAUM.length + AUSSERHALB.length;           // 13
-// Wie in der App: EINMAL auf eine Nachkommastelle runden.
-const ERWARTETER_ANSPRUCH = Math.round((ARBEITSTAGE / 365 * 24) * 10) / 10;
+// § 9 Rahmenvereinbarung: Arbeitstage / 13, einmal auf eine Stelle gerundet.
+const ERWARTETER_ANSPRUCH = Math.round((ARBEITSTAGE / 13) * 10) / 10;
 const fmtT = n => (Math.round(n * 10) / 10).toString().replace('.', ',');
 
 function db(extraShifts = []) {
@@ -71,7 +72,10 @@ function db(extraShifts = []) {
             wageSingle: STUNDENLOHN, wageDouble: STUNDENLOHN,
             wageHistory: [{ gueltigAb: '2020-01-01', single: STUNDENLOHN, double: STUNDENLOHN }],
             abgabenPercent: 31.17, rvAnteilProzent: 3.6, dataController: '',
-            rooms: { A: { name: 'Raum A', owner1: 50, owner2: 50 } },
+            // Bewusst SCHIEF (80/20): so unterscheidet sich die raumbasierte
+            // Aufteilung einer Schicht (40,00 / 10,00) sichtbar von der
+            // hälftigen Aufteilung eines Urlaubstags (25,00 / 25,00).
+            rooms: { A: { name: 'Raum A', owner1: 80, owner2: 20 } },
             doubleSplit: { main: 50, owner1: 25, owner2: 25 },
             labels: { owner1: 'Eigentümer 1', owner2: 'Eigentümer 2' },
             dailyBackup: { enabled: false, recipient: '' },
@@ -195,6 +199,36 @@ const gespeicherteSchichten = page => page.evaluate(k =>
     check('keine Stunden', zeile && zeile[4] === '–', zeile && zeile[4]);
     check('Betrag in der Zeile', zeile && zeile[7] === '50,00 EUR', zeile && zeile[7]);
 
+    console.log('Interne Abrechnung: Urlaub 50/50');
+    /* Urlaubstage hängen an keinem Raum, also greift die Raum-Aufteilung nicht.
+     * Sie werden hälftig auf die Eigentümer verteilt — die Testdaten haben
+     * bewusst nur einen Raum mit 50/50, deshalb wird zusätzlich gegen eine
+     * Schichtzeile geprüft: bei einer schiefen Raumaufteilung müsste sich der
+     * Urlaub weiterhin exakt hälftig teilen. */
+    const kostenZeile = await page.evaluate(() => {
+        const kopf = Array.from(document.querySelectorAll('#adminTable thead th'));
+        const i1 = kopf.findIndex(th => th.id === 'thKostenOwner1');
+        const i2 = kopf.findIndex(th => th.id === 'thKostenOwner2');
+        const tr = Array.from(document.querySelectorAll('#adminTable tbody tr'))
+            .find(r => r.cells[0]?.textContent.trim() === '01.07.2026');
+        return tr ? [tr.cells[i1].textContent.trim(), tr.cells[i2].textContent.trim()] : null;
+    });
+    check('Urlaubstag je zur Hälfte auf beide Eigentümer',
+        kostenZeile && kostenZeile[0] === '25,00 EUR' && kostenZeile[1] === '25,00 EUR',
+        kostenZeile ? kostenZeile.join(' / ') : '(keine Zeile)');
+    // Gegenprobe an einer Schichtzeile: dort greift die Raumaufteilung 80/20.
+    const schichtZeile = await page.evaluate(() => {
+        const kopf = Array.from(document.querySelectorAll('#adminTable thead th'));
+        const i1 = kopf.findIndex(th => th.id === 'thKostenOwner1');
+        const i2 = kopf.findIndex(th => th.id === 'thKostenOwner2');
+        const tr = Array.from(document.querySelectorAll('#adminTable tbody tr'))
+            .find(r => r.cells[0]?.textContent.trim() === '09.06.2026');
+        return tr ? [tr.cells[i1].textContent.trim(), tr.cells[i2].textContent.trim()] : null;
+    });
+    check('Schicht dagegen raumbasiert 80/20',
+        schichtZeile && schichtZeile[0] === '40,00 EUR' && schichtZeile[1] === '10,00 EUR',
+        schichtZeile ? schichtZeile.join(' / ') : '(keine Zeile)');
+
     console.log('Urlaubsentgelt zählt zum Brutto');
     const summe = await page.evaluate(() => {
         const stats = Array.from(document.querySelectorAll('#adminSummary .stat'));
@@ -215,7 +249,7 @@ const gespeicherteSchichten = page => page.evaluate(k =>
             value: s.querySelector('.value').textContent.trim(),
         })));
     const wert = l => (konto.find(k => k.label.startsWith(l)) || {}).value;
-    check(`Anspruch = ${ERWARTETER_ANSPRUCH} (${ARBEITSTAGE} Arbeitstage ÷ 365 × 24)`,
+    check(`Anspruch = ${ERWARTETER_ANSPRUCH} (${ARBEITSTAGE} Arbeitstage ÷ 13)`,
         wert('Anspruch') === fmtT(ERWARTETER_ANSPRUCH) + ' Tage',
         wert('Anspruch'));
     check('Genommen = 1 Tag', wert('Genommen') === '1 Tage', wert('Genommen'));
@@ -251,6 +285,35 @@ const gespeicherteSchichten = page => page.evaluate(k =>
     const nachVersuch = await gespeicherteSchichten(page);
     check('keine Schicht am Urlaubstag gespeichert',
         !nachVersuch.some(s => !s.isVacation && s.date === URLAUBSTAG && s.employeeId === 2));
+    await page.context().close();
+
+    console.log('Zusammenhängender Urlaub: Satz vom Urlaubsantritt');
+    /* § 9 bemisst nach den 13 Wochen vor dem URLAUBSANTRITT. Bei mehreren
+     * aufeinanderfolgenden Tagen muss deshalb für alle derselbe Satz gelten —
+     * sonst bekäme jeder Tag ein um einen Tag verschobenes Fenster und ein
+     * durchgehender Urlaub stünde mit unterschiedlichen Beträgen im PDF. */
+    /* Eine Schicht liegt GENAU auf der Fenstergrenze: Antritt 10.06. blickt
+     * zurück bis 12.03. (91 Tage), der 12.03. ist also gerade noch drin. Rückt
+     * das Fenster für den zweiten Tag um einen Tag weiter, fällt sie heraus und
+     * der Satz änderte sich — ohne diese Schicht bestünde der Test auch ohne
+     * die Antritts-Logik und wäre wertlos.
+     *
+     * Mit Antritt:  (500 + 100) / 11 = 54,55 für alle drei Tage.
+     * Ohne Antritt:  Tag 1 54,55, danach 500 / 10 = 50,00. */
+    page = await openApp(browser, db(['2026-03-12']));
+    for (const d of ['2026-06-10', '2026-06-11', '2026-06-12']) {
+        await urlaubEintragen(page, d);
+    }
+    const block = (await gespeicherteSchichten(page))
+        .filter(s => s.isVacation)
+        .sort((a, b) => a.date.localeCompare(b.date));
+    check('drei Urlaubstage angelegt', block.length === 3, block.map(s => s.date).join(', '));
+    const betraege = [...new Set(block.map(s => s.urlaubsBetrag))];
+    const erwartetBlock = Math.round((500 + 100) / 11 * 100) / 100;   // 54,55
+    check('alle Tage des Blocks mit demselben Betrag',
+        betraege.length === 1, block.map(s => `${s.date}: ${s.urlaubsBetrag}`).join(' | '));
+    check(`Satz stammt vom Urlaubsantritt (${erwartetBlock}, nicht ${ERWARTETER_TAGESSATZ})`,
+        betraege[0] === erwartetBlock, String(betraege[0]));
     await page.context().close();
 
     console.log('Ohne Arbeitstage im Bezugszeitraum');
