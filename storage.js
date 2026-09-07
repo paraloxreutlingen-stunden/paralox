@@ -295,6 +295,15 @@
             if (!s.isVacation) return;
             const b = Number(s.urlaubsBetrag);
             s.urlaubsBetrag = isFinite(b) && b >= 0 ? b : 0;
+            /* Datum einer Vorab-Auszahlung (§ 11 Abs. 2 BUrlG: das
+             * Urlaubsentgelt ist VOR Urlaubsantritt auszuzahlen, nicht erst
+             * zum regulären Monatstermin). Leer = mit der Monatsabrechnung
+             * ausgezahlt. Der Betrag bleibt in beiden Fällen Teil des
+             * Monatsbruttos; gesetzt wird lediglich vermerkt, dass er bereits
+             * geflossen ist und am Monatsende nicht erneut zu überweisen ist. */
+            s.vorabAusgezahltAm =
+                (typeof s.vorabAusgezahltAm === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.vorabAusgezahltAm))
+                    ? s.vorabAusgezahltAm : '';
             // Urlaubstage haben keine Arbeitszeit und keinen Raum — defensiv
             // setzen, damit Stundensummen und Raumlogik nie darauf stoßen.
             s.startTime = '';

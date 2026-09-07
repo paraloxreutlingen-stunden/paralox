@@ -404,6 +404,25 @@
         };
     }
 
+    /* ---------- Vorab ausgezahltes Urlaubsentgelt ----------
+     *
+     * § 11 Abs. 2 BUrlG verlangt die Auszahlung VOR Urlaubsantritt, also nicht
+     * erst zum regulären Monatstermin. Wurde so gezahlt, trägt der Urlaubstag
+     * ein Datum in vorabAusgezahltAm.
+     *
+     * Wichtig für die Abrechnung: Der Betrag bleibt vollständig im Brutto und
+     * damit in der Minijob-Grenze und der RV-Bemessung — eine vorgezogene
+     * Zahlung ändert nichts daran, WAS verdient wurde, nur WANN es geflossen
+     * ist. Abgezogen wird er allein von der Überweisung am Monatsende, damit er
+     * nicht ein zweites Mal ausgezahlt wird. */
+    function vorabAusgezahltSumme(shiftList) {
+        let summe = 0;
+        shiftList.forEach(s => {
+            if (isVacation(s) && s.vorabAusgezahltAm) summe += shiftPayAmount(s);
+        });
+        return roundHalfUp(summe);
+    }
+
     /* Urlaubs-Dialog eines Mitarbeiters: Restkonto, bereits eingetragene Tage
      * und das Formular zum Nachtragen. Der Betrag wird beim Eintragen einmal
      * berechnet und fest im Datensatz abgelegt; die Vorschau darunter zeigt,
@@ -421,7 +440,11 @@
             const liste = k.tage.length
                 ? k.tage.map(d => {
                     const s = shifts().find(x => isVacation(x) && x.employeeId === empId && x.date === d);
-                    return `<li>${escapeHtml(fmtDateDE(d))} <span class="muted">— ${fmtEUR(Number(s?.urlaubsBetrag) || 0)}</span>
+                    const vorab = s?.vorabAusgezahltAm
+                        ? `<span class="badge ok" title="Vorab ausgezahlt am ${escapeHtml(fmtDateDE(s.vorabAusgezahltAm))}">vorab bezahlt</span>`
+                        : '';
+                    return `<li>${escapeHtml(fmtDateDE(d))} <span class="muted">— ${fmtEUR(Number(s?.urlaubsBetrag) || 0)}</span> ${vorab}
+                        <button class="btn small" data-urlaub-vorab="${s?.id}">${s?.vorabAusgezahltAm ? 'Vorab-Zahlung zurücknehmen' : 'Als vorab bezahlt markieren'}</button>
                         <button class="btn small danger" data-urlaub-del="${s?.id}">Löschen</button></li>`;
                 }).join('')
                 : '<li class="muted">Noch keine Urlaubstage in diesem Jahr.</li>';
@@ -449,6 +472,15 @@
                 <label>Urlaubstag eintragen
                     <input type="date" id="urlaubDatum" value="${heute}" autocomplete="off">
                 </label>
+                <label class="check">
+                    <input type="checkbox" id="urlaubVorab"> Urlaubsentgelt vorab ausgezahlt
+                </label>
+                <label id="urlaubVorabDatumWrap" class="hidden">Ausgezahlt am
+                    <input type="date" id="urlaubVorabDatum" value="${heute}" autocomplete="off">
+                </label>
+                <p class="muted small">§ 11 Abs. 2 BUrlG: das Urlaubsentgelt ist vor Urlaubsantritt
+                   auszuzahlen. Wurde separat überwiesen, hier ankreuzen — der Betrag bleibt im
+                   Brutto, wird am Monatsende aber nicht noch einmal überwiesen.</p>
                 <p class="muted small" id="urlaubVorschau"></p>
                 <h4>Urlaubstage ${jahr}</h4>
                 <ul class="urlaub-liste">${liste}</ul>
@@ -468,6 +500,24 @@
             feld.oninput = zeigeVorschau;
             feld.onchange = zeigeVorschau;
             zeigeVorschau();
+
+            // Datumsfeld nur zeigen, wenn die Vorab-Zahlung angekreuzt ist.
+            const vorabBox = $('#urlaubVorab');
+            const vorabWrap = $('#urlaubVorabDatumWrap');
+            vorabBox.onchange = () => vorabWrap.classList.toggle('hidden', !vorabBox.checked);
+
+            $('#modalBody').querySelectorAll('[data-urlaub-vorab]').forEach(btn => btn.onclick = () => {
+                const s = shifts().find(x => x.id === Number(btn.dataset.urlaubVorab));
+                if (!s) return;
+                // Umschalten: gesetzt -> zurücknehmen, leer -> auf heute setzen.
+                s.vorabAusgezahltAm = s.vorabAusgezahltAm ? '' : todayISO();
+                saveData();
+                zeichne();
+                if (state.activeTab === 'shifts') renderAdminShifts();
+                toast(s.vorabAusgezahltAm
+                    ? `Als vorab ausgezahlt markiert (${fmtDateDE(s.vorabAusgezahltAm)})`
+                    : 'Vorab-Zahlung zurückgenommen', 'success');
+            });
 
             $('#modalBody').querySelectorAll('[data-urlaub-del]').forEach(btn => btn.onclick = () => {
                 const id = Number(btn.dataset.urlaubDel);
@@ -509,6 +559,13 @@
                 return;
             }
             const t = urlaubsTagessatz(empId, datum);
+            // Vorab-Auszahlung optional beim Anlegen; Datum vorbelegt auf heute.
+            const vorabAn = $('#urlaubVorab').checked;
+            const vorabAm = vorabAn ? ($('#urlaubVorabDatum').value || todayISO()) : '';
+            if (vorabAn && !validDate(vorabAm)) {
+                toast('Bitte ein gültiges Datum der Vorab-Auszahlung wählen.', 'error');
+                return;
+            }
             state.data.shifts.push({
                 id: window.ParaloxStorage.nextId(shifts()),
                 employeeId: empId,
@@ -519,6 +576,7 @@
                 secondRoom: null,
                 isDouble: false,
                 isVacation: true,
+                vorabAusgezahltAm: vorabAm,
                 // Eingefroren: siehe wageFor(). Der Schnitt wandert mit neuen
                 // Schichten, der gemeldete Betrag darf das nicht.
                 urlaubsBetrag: t.betrag,
@@ -2140,12 +2198,18 @@
             if (p.mindestGreift) mindestMonths.push(month);
         });
         const monatsZahl = byMonth.size;
+        /* Bereits vorab ausgezahltes Urlaubsentgelt im selben Zeitraum. Es ist
+         * Teil von brutto und auszahlung — abgezogen wird es erst bei der
+         * Frage, was am Monatsende noch zu überweisen ist. */
+        const vorab = vorabAusgezahltSumme(shiftList);
         // Die Monatswerte sind bereits Cent-Beträge; die Zeitraum-Summe ist ihre
         // Summe (roundHalfUp glättet nur Float-Rauschen).
         return {
             brutto: roundHalfUp(brutto),
             rvAnteil: roundHalfUp(rvAnteil),
             auszahlung: roundHalfUp(auszahlung),
+            vorabAusgezahlt: vorab,
+            nochAuszuzahlen: roundHalfUp(auszahlung - vorab),
             mindestMonths: mindestMonths.sort(),
             monthCount: pauschaleMonths,
             pauschaleTotal: roundHalfUp(pauschaleTotal),
@@ -2375,6 +2439,13 @@
                 `<div class="stat"><div class="label">Brutto ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.brutto)}</div></div>` +
                 `<div class="stat"><div class="label">${rvLabel}</div><div class="value">${p.alleBefreit ? '–' : '− ' + fmtEUR(p.rvAnteil)}</div></div>` +
                 `<div class="stat"><div class="label">Auszahlung an ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.auszahlung)}</div></div>`;
+            // Vorab ausgezahltes Urlaubsentgelt absetzen — es steckt bereits in
+            // Brutto und Auszahlung, darf aber nicht erneut überwiesen werden.
+            if (p.vorabAusgezahlt > 0) {
+                summaryHtmlOut +=
+                    `<div class="stat"><div class="label">davon vorab ausgezahlt (Urlaub)</div><div class="value">− ${fmtEUR(p.vorabAusgezahlt)}</div></div>` +
+                    `<div class="stat${p.nochAuszuzahlen < 0 ? ' warn' : ''}"><div class="label">Noch zu überweisen</div><div class="value">${fmtEUR(p.nochAuszuzahlen)}</div></div>`;
+            }
             if (p.pauschaleTotal > 0) {
                 summaryHtmlOut +=
                     `<div class="stat"><div class="label">davon Pauschale (${p.monthCount} ${p.monthCount === 1 ? 'Monat' : 'Monate'})</div><div class="value">${fmtEUR(p.pauschaleTotal)}</div></div>`;
@@ -2605,11 +2676,14 @@
             rows.push([]);
             rows.push(['LOHN-AUSZAHLUNG PRO MITARBEITER']);
             const hasAnyPauschale = [...byEmp.values()].some(a => a.pauschaleTotal > 0);
-            if (hasAnyPauschale) {
-                rows.push(['Mitarbeiter', 'Brutto (EUR)', 'davon Pauschale (EUR)', `RV-Anteil AN (EUR)`, 'Auszahlung (EUR)']);
-            } else {
-                rows.push(['Mitarbeiter', 'Brutto (EUR)', `RV-Anteil AN (EUR)`, 'Auszahlung (EUR)']);
-            }
+            // Spalten für die Vorab-Auszahlung nur, wenn es sie im Zeitraum gibt —
+            // sonst bliebe in jeder Auswertung eine leere Doppelspalte stehen.
+            const hasAnyVorab = [...byEmp.values()].some(a => a.vorabAusgezahlt > 0);
+            const kopf = ['Mitarbeiter', 'Brutto (EUR)'];
+            if (hasAnyPauschale) kopf.push('davon Pauschale (EUR)');
+            kopf.push('RV-Anteil AN (EUR)', 'Auszahlung (EUR)');
+            if (hasAnyVorab) kopf.push('davon vorab ausgezahlt (EUR)', 'Noch zu überweisen (EUR)');
+            rows.push(kopf);
             [...byEmp.entries()]
                 .sort((a, b) => empName(a[0]).localeCompare(empName(b[0]), 'de'))
                 .forEach(([empId, a]) => {
@@ -2627,8 +2701,20 @@
                     if (hasAnyPauschale) row.push(roundHalfUp(a.pauschaleTotal).toFixed(2));
                     row.push(a.befreit ? '0,00' : roundHalfUp(a.rvAnteil).toFixed(2));
                     row.push(roundHalfUp(a.auszahlung).toFixed(2));
+                    if (hasAnyVorab) {
+                        row.push(roundHalfUp(a.vorabAusgezahlt).toFixed(2));
+                        row.push(roundHalfUp(a.nochAuszuzahlen).toFixed(2));
+                    }
                     rows.push(row);
                 });
+        }
+        // Erläuterung zur Vorab-Auszahlung, damit die Spalten ohne Rückfrage
+        // verständlich sind — die Buchhaltung sieht nur die Datei.
+        if ([...byEmp.values()].some(a => a.vorabAusgezahlt > 0)) {
+            rows.push([]);
+            rows.push(['Hinweis vorab ausgezahltes Urlaubsentgelt']);
+            rows.push(['Nach § 11 Abs. 2 BUrlG vor Urlaubsantritt ausgezahlte Beträge sind im Brutto und in der Auszahlung enthalten.']);
+            rows.push(['"Noch zu überweisen" ist der um diese Beträge verminderte Rest — nur dieser Betrag geht zum Monatstermin an den Mitarbeiter.']);
         }
         // Sammelhinweis: alle Monate, in denen mindestens ein Mitarbeiter
         // unter die 175-EUR-Schwelle gefallen ist (inkl. Pauschale gerechnet).
@@ -2938,10 +3024,38 @@
             doc.text(rvLabel, 40, yAfter + 18);
             doc.text(befreit ? '–' : `− ${fmtEUR(p.rvAnteil)}`, 540, yAfter + 18, { align: 'right' });
 
+            /* Bereits vor Urlaubsantritt ausgezahltes Urlaubsentgelt
+             * (§ 11 Abs. 2 BUrlG). Es steckt vollständig im Brutto und in der
+             * Auszahlung oben; hier wird es abgesetzt, damit die letzte Zeile
+             * zeigt, was am Monatsende TATSÄCHLICH noch zu überweisen ist. */
+            const vorabAmt = vorabAusgezahltSumme(list);
+            const nochOffen = roundHalfUp(p.auszahlung - vorabAmt);
+            let zeileY = yAfter + 38;
+            if (vorabAmt > 0) {
+                doc.text(`Auszahlung gesamt:`, 40, zeileY);
+                doc.text(fmtEUR(p.auszahlung), 540, zeileY, { align: 'right' });
+                zeileY += 16;
+                doc.text(`abzüglich vorab ausgezahltes Urlaubsentgelt:`, 40, zeileY);
+                doc.text(`− ${fmtEUR(vorabAmt)}`, 540, zeileY, { align: 'right' });
+                zeileY += 20;
+            }
             doc.setFont(undefined, 'bold');
-            doc.text(`Auszahlung an Mitarbeiter:`, 40, yAfter + 38);
-            doc.text(fmtEUR(p.auszahlung), 540, yAfter + 38, { align: 'right' });
+            doc.text(vorabAmt > 0 ? `Noch zu überweisen:` : `Auszahlung an Mitarbeiter:`, 40, zeileY);
+            doc.text(fmtEUR(vorabAmt > 0 ? nochOffen : p.auszahlung), 540, zeileY, { align: 'right' });
             doc.setFont(undefined, 'normal');
+            // Der Vorschuss kann den Monatsrest übersteigen, wenn der Urlaub den
+            // Monat dominiert — dann steht hier ein Minus, das der Admin sehen muss.
+            const ueberzahlt = vorabAmt > 0 && nochOffen < 0;
+            if (ueberzahlt) {
+                doc.setFontSize(9); doc.setTextColor(180, 60, 0);
+                doc.text('Hinweis: Die Vorab-Auszahlung übersteigt den Monatsanspruch — Überzahlung.',
+                    40, zeileY + 14);
+                doc.setFontSize(11); doc.setTextColor(0);
+            }
+            /* yAfter zurücksetzen, damit die folgenden Blöcke (Urlaubskonto bei
+             * +58, Mindestbeitrags-Hinweis bei +80) ihren gewohnten Abstand zur
+             * letzten geschriebenen Zeile behalten — sonst überlappen sie. */
+            yAfter = zeileY - 38 + (ueberzahlt ? 18 : 0);
 
             /* Urlaubs-Restkonto des Kalenderjahres, zu dem der abgerechnete
              * Monat gehört. Steht auf jeder Seite, damit Mitarbeiter und

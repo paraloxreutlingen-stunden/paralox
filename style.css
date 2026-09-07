@@ -364,7 +364,20 @@ table.data td .sub { font-size: 0.72rem; font-weight: 400; margin-top: 2px; whit
 }
 .urlaub-liste li:last-child { border-bottom: none; }
 .urlaub-liste .btn { margin-left: auto; }
+.urlaub-liste [data-urlaub-vorab] { margin-left: auto; }
+.urlaub-liste [data-urlaub-del] { margin-left: .4rem; }
 .warn-text { color: #fde68a; }
+/* Kennzeichnung einer Überzahlung: die Vorab-Auszahlung war größer als der
+   Monatsanspruch, der Rest ist negativ. */
+.stat.warn .value { color: #fca5a5; }
+/* Ankreuzfeld im Urlaubs-Dialog nebeneinander statt untereinander. */
+label.check {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    font-weight: 400;
+}
+label.check input { width: auto; }
 
 /* Limits (Jahres-/Monatsverdienst mit Warnschwellen) */
 .limits {
