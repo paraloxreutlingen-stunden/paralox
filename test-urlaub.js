@@ -168,14 +168,26 @@ const gespeicherteSchichten = page => page.evaluate(k =>
     const nachher = (await gespeicherteSchichten(page)).find(s => s.isVacation);
     check('Betrag nach zusätzlicher Schicht unverändert',
         nachher && nachher.urlaubsBetrag === ERWARTETER_TAGESSATZ, String(nachher && nachher.urlaubsBetrag));
-    /* Gegenprobe: eine FRISCHE Berechnung liefert wegen der zusätzlichen
-     * Schicht einen anderen Satz. Der Betrag wird gezielt aus der Vorschau
-     * gelesen, nicht per Textsuche — "250,00 EUR" enthält sonst "50,00 EUR"
-     * als Teilstring und die Prüfung wäre wertlos. */
+    /* Gegenprobe: eine FRISCHE Berechnung für DENSELBEN Tag liefert wegen der
+     * zusätzlichen Schicht einen anderen Satz. Der Betrag wird gezielt aus der
+     * Vorschau gelesen, nicht per Textsuche — "250,00 EUR" enthält sonst
+     * "50,00 EUR" als Teilstring und die Prüfung wäre wertlos.
+     *
+     * Das Datum wird ausdrücklich auf den Urlaubstag gesetzt. Ohne das rechnete
+     * die Vorschau auf den heutigen Tag, und sobald die Testdaten mehr als 13
+     * Wochen zurückliegen, gäbe es gar keinen Bezugszeitraum mehr — der Test
+     * wäre je nach Kalendertag grün oder rot. */
     await page.evaluate(() => document.querySelector('[data-tab="employees"]')?.click());
     await page.waitForTimeout(300);
     await page.evaluate(() => document.querySelector('[data-emp-urlaub="2"]').click());
     await page.waitForTimeout(400);
+    await page.evaluate(d => {
+        const f = document.getElementById('urlaubDatum');
+        f.value = d;
+        f.dispatchEvent(new Event('input', { bubbles: true }));
+        f.dispatchEvent(new Event('change', { bubbles: true }));
+    }, URLAUBSTAG);
+    await page.waitForTimeout(200);
     const vorschauJetzt = await page.evaluate(() => document.getElementById('urlaubVorschau')?.textContent || '');
     const frischerSatz = (vorschauJetzt.match(/Betrag:\s*([\d.]+,\d\d)\s*EUR/) || [])[1];
     check('frisch gerechnet ergäbe einen anderen Satz als den gespeicherten',

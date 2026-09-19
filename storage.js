@@ -312,6 +312,32 @@
             s.secondRoom = null;
             s.isDouble = false;
         });
+
+        /* Sonderzahlungen (Weihnachtsgeld, Prämien, Arbeitgeberzuschüsse …)
+         * liegen ebenfalls als Einträge in shifts, erkennbar an isSonderzahlung.
+         * Sie tragen einen frei eingegebenen Betrag und eine Pflicht-Notiz mit
+         * dem Zahlungsgrund.
+         *
+         * beitragsfrei = true nimmt den Betrag aus Brutto, Minijob-Grenze und
+         * Pauschalabgaben heraus (z. B. Arbeitgeberzuschuss zum Mutterschafts-
+         * geld, § 1 Abs. 1 Nr. 6 SvEV). Ausgezahlt wird er trotzdem — er ist
+         * kein Arbeitsentgelt im Sinne der Sozialversicherung, aber sehr wohl
+         * Geld, das der Mitarbeiter bekommt. */
+        data.shifts.forEach(s => {
+            if (!s) return;
+            s.isSonderzahlung = !!s.isSonderzahlung;
+            if (!s.isSonderzahlung) return;
+            const b = Number(s.sonderBetrag);
+            s.sonderBetrag = isFinite(b) && b >= 0 ? b : 0;
+            s.beitragsfrei = !!s.beitragsfrei;
+            // Wie Urlaubstage: keine Arbeitszeit, kein Raum.
+            s.startTime = '';
+            s.endTime = '';
+            s.room = null;
+            s.secondRoom = null;
+            s.isDouble = false;
+            s.isVacation = false;
+        });
         // Sicherstellen dass jeder Mitarbeiter ein assignedTo hat
         data.employees.forEach(e => {
             /* Der Urlaubsanspruch wird NICHT gespeichert, sondern aus den

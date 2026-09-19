@@ -350,6 +350,19 @@ table.data td .sub { font-size: 0.72rem; font-weight: 400; margin-top: 2px; whit
     color: #bfdbfe;
     border-color: rgba(96, 165, 250, .4);
 }
+/* Sonderzahlungen — eigener Farbton, damit sie in der Liste nicht mit
+   Urlaubstagen verwechselt werden. */
+.badge.sonder {
+    background: rgba(192, 132, 252, .16);
+    color: #e9d5ff;
+    border-color: rgba(192, 132, 252, .4);
+}
+/* Zusatz-Kennzeichen an einer beitragsfreien Sonderzahlung. */
+.badge.frei {
+    background: rgba(74, 222, 128, .14);
+    color: #bbf7d0;
+    border-color: rgba(74, 222, 128, .35);
+}
 .urlaub-liste {
     list-style: none;
     margin: .4rem 0 0;

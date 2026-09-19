@@ -338,6 +338,38 @@
     // Urlaubstag statt gearbeiteter Schicht.
     const isVacation = s => !!(s && s.isVacation);
 
+    /* Sonderzahlung (Weihnachtsgeld, Prämie, Arbeitgeberzuschuss …) — ein
+     * Geldbetrag ohne Arbeitszeit, mit Pflicht-Notiz zum Zahlungsgrund. */
+    const isSonderzahlung = s => !!(s && s.isSonderzahlung);
+
+    /* Einträge ohne Uhrzeiten. Für alles, was sich auf Arbeitszeit stützt
+     * (Überschneidungsprüfung, Stundensummen, Raumlogik) sind sie unsichtbar. */
+    const isZeitlos = s => isVacation(s) || isSonderzahlung(s);
+
+    /* Begründet ein Eintrag den Anspruch auf die Monatspauschale?
+     *
+     * Schichten und Urlaubstage ja — in beiden Fällen wurde das Arbeits-
+     * verhältnis in diesem Monat gelebt. Eine Sonderzahlung allein nicht: sie
+     * kann in einen Monat fallen, in dem gar nicht gearbeitet wurde (etwa der
+     * Arbeitgeberzuschuss zum Mutterschaftsgeld). Ohne diese Unterscheidung
+     * entstünde in so einem Monat ein Brutto aus dem Nichts, auf das dann auch
+     * noch der Mindestbeitrag fiele. */
+    const zaehltFuerPauschale = s => !isSonderzahlung(s);
+
+    /* Beitragsfrei gestellte Sonderzahlung: kein Arbeitsentgelt im Sinne der
+     * Sozialversicherung (z. B. Arbeitgeberzuschuss zum Mutterschaftsgeld,
+     * § 1 Abs. 1 Nr. 6 SvEV). Der Betrag wird ausgezahlt, bleibt aber außen vor
+     * bei Brutto, Minijob-Grenze, RV-Bemessung und Pauschalabgaben. */
+    const isBeitragsfrei = s => isSonderzahlung(s) && !!s.beitragsfrei;
+
+    /* Der Teil eines Eintrags, der als Arbeitsentgelt zählt. Für beitragsfreie
+     * Sonderzahlungen 0, sonst der volle Betrag. Überall dort zu verwenden, wo
+     * es um Brutto, Minijob-Grenze oder Beitragsbemessung geht — NICHT dort,
+     * wo es um die Auszahlung geht, die den Betrag ja enthält. */
+    function shiftBruttoAmount(shift) {
+        return isBeitragsfrei(shift) ? 0 : shiftPayAmount(shift);
+    }
+
     /* ---------- Urlaubsentgelt ----------
      *
      * § 11 BUrlG: Das Urlaubsentgelt bemisst sich nach dem durchschnittlichen
@@ -384,9 +416,14 @@
         // Nicht vom einzelnen Tag aus rechnen, sondern vom Urlaubsantritt.
         datum = urlaubsAntritt(empId, datum);
         const von = isoMinusDays(datum, URLAUB_REF_WOCHEN * 7);
+        /* Nur GEARBEITETE Tage bemessen das Urlaubsentgelt. Sonderzahlungen
+         * sind ebenso wenig Arbeitsverdienst wie frühere Urlaubstage — flössen
+         * sie ein, hübe ein Weihnachtsgeld den Urlaubssatz an und brächte
+         * zusätzlich einen Tag in den Divisor, an dem gar nicht gearbeitet
+         * wurde. */
         const relevant = shifts().filter(s =>
             s.employeeId === empId &&
-            !isVacation(s) &&
+            !isZeitlos(s) &&
             s.date >= von && s.date < datum);
         let summe = 0;
         const tage = new Set();
@@ -421,6 +458,127 @@
             if (isVacation(s) && s.vorabAusgezahltAm) summe += shiftPayAmount(s);
         });
         return roundHalfUp(summe);
+    }
+
+    /* Sonderzahlungs-Dialog eines Mitarbeiters: bereits erfasste Zahlungen des
+     * laufenden Jahres und das Formular zum Nachtragen.
+     *
+     * Anders als beim Urlaub gibt der Admin den Betrag selbst ein — es gibt
+     * keine Formel, aus der er sich ableiten ließe. Die Notiz ist Pflicht: aus
+     * ihr muss später hervorgehen, WARUM gezahlt wurde, sonst lässt sich die
+     * Beitragsfreiheit gegenüber der Prüfung nicht begründen. */
+    function openSonderzahlungModal(empId) {
+        const emp = employees().find(x => x.id === empId);
+        if (!emp) return;
+        const modal = $('#modal');
+        const jahr = new Date().getFullYear();
+
+        const zeichne = () => {
+            const heute = todayISO();
+            const eigene = shifts()
+                .filter(s => isSonderzahlung(s) && s.employeeId === empId &&
+                             (s.date || '').slice(0, 4) === String(jahr))
+                .sort((a, b) => a.date.localeCompare(b.date));
+            const summePflicht = roundHalfUp(eigene.filter(s => !s.beitragsfrei)
+                .reduce((n, s) => n + (Number(s.sonderBetrag) || 0), 0));
+            const summeFrei = roundHalfUp(eigene.filter(s => s.beitragsfrei)
+                .reduce((n, s) => n + (Number(s.sonderBetrag) || 0), 0));
+
+            const liste = eigene.length
+                ? eigene.map(s => `<li>
+                        <span>${escapeHtml(fmtDateDE(s.date))} <span class="muted">— ${fmtEUR(Number(s.sonderBetrag) || 0)}</span>
+                        ${s.beitragsfrei ? '<span class="badge frei">beitragsfrei</span>' : ''}
+                        <br><span class="muted small">${escapeHtml(s.note || '')}</span></span>
+                        <button class="btn small danger" data-sonder-del="${s.id}">Löschen</button>
+                    </li>`).join('')
+                : '<li class="muted">Noch keine Sonderzahlungen in diesem Jahr.</li>';
+
+            $('#modalBody').innerHTML = `
+                <div class="stats">
+                    <div class="stat"><div class="label">Beitragspflichtig ${jahr}</div><div class="value">${fmtEUR(summePflicht)}</div></div>
+                    <div class="stat"><div class="label">Beitragsfrei ${jahr}</div><div class="value">${fmtEUR(summeFrei)}</div></div>
+                </div>
+                <label>Datum
+                    <input type="date" id="sonderDatum" value="${heute}" autocomplete="off">
+                </label>
+                <label>Betrag in EUR
+                    <input type="number" step="0.01" min="0" id="sonderBetrag" value="" autocomplete="off">
+                </label>
+                <label>Grund der Zahlung (Pflicht)
+                    <input type="text" id="sonderNotiz" maxlength="200" autocomplete="off"
+                        placeholder="z.B. Weihnachtsgeld oder Arbeitgeberzuschuss Mutterschaftsgeld">
+                </label>
+                <label class="check">
+                    <input type="checkbox" id="sonderFrei"> beitragsfrei
+                </label>
+                <p class="muted small">Angehakt zählt der Betrag <strong>nicht</strong> ins Brutto, nicht auf die
+                   Minijob-Grenze und trägt keine Pauschalabgaben — für Zahlungen, die kein Arbeitsentgelt sind
+                   (z. B. Arbeitgeberzuschuss zum Mutterschaftsgeld, § 1 Abs. 1 Nr. 6 SvEV).
+                   Ausgezahlt wird er trotzdem. Nicht angehakt zählt er wie normaler Lohn (Weihnachtsgeld, Prämien).</p>
+                <h4>Sonderzahlungen ${jahr}</h4>
+                <ul class="urlaub-liste">${liste}</ul>
+            `;
+
+            $('#modalBody').querySelectorAll('[data-sonder-del]').forEach(btn => btn.onclick = () => {
+                const id = Number(btn.dataset.sonderDel);
+                const i = shifts().findIndex(x => x.id === id);
+                if (i === -1) return;
+                state.data.shifts.splice(i, 1);
+                saveData();
+                zeichne();
+                if (state.activeTab === 'shifts') renderAdminShifts();
+                toast('Sonderzahlung gelöscht', 'success');
+            });
+        };
+
+        $('#modalTitle').textContent = `Sonderzahlung — ${emp.name}`;
+        zeichne();
+        modal.classList.remove('hidden');
+
+        const ok = $('#modalOk');
+        const cancel = $('#modalCancel');
+        const schliessen = () => {
+            modal.classList.add('hidden');
+            ok.onclick = null;
+            cancel.onclick = null;
+            ok.textContent = 'OK';
+        };
+        ok.textContent = 'Sonderzahlung eintragen';
+        ok.onclick = () => {
+            const datum = $('#sonderDatum').value;
+            if (!validDate(datum)) { toast('Bitte ein gültiges Datum wählen.', 'error'); return; }
+            const betrag = Number(String($('#sonderBetrag').value).replace(',', '.'));
+            if (!isFinite(betrag) || betrag <= 0) {
+                toast('Bitte einen Betrag größer als 0 eingeben.', 'error'); return;
+            }
+            const notiz = $('#sonderNotiz').value.trim();
+            if (!notiz) {
+                toast('Bitte den Grund der Zahlung eintragen — er gehört in die Lohnunterlagen.', 'error');
+                return;
+            }
+            state.data.shifts.push({
+                id: window.ParaloxStorage.nextId(shifts()),
+                employeeId: empId,
+                date: datum,
+                startTime: '',
+                endTime: '',
+                room: null,
+                secondRoom: null,
+                isDouble: false,
+                isVacation: false,
+                isSonderzahlung: true,
+                sonderBetrag: roundHalfUp(betrag),
+                beitragsfrei: $('#sonderFrei').checked,
+                note: notiz,
+                createdAt: new Date().toISOString(),
+            });
+            saveData();
+            toast(`Sonderzahlung über ${fmtEUR(roundHalfUp(betrag))} eingetragen`, 'success');
+            zeichne();
+            if (state.activeTab === 'shifts') renderAdminShifts();
+            if (state.activeTab === 'mine') renderMine();
+        };
+        cancel.onclick = schliessen;
     }
 
     /* Urlaubs-Dialog eines Mitarbeiters: Restkonto, bereits eingetragene Tage
@@ -463,7 +621,7 @@
                     <div class="stat"><div class="label">Übrig</div><div class="value">${fmtTage(k.rest)} Tage</div></div>
                 </div>
                 <p class="muted small">Anspruch = ${k.arbeitstage} Arbeitstage ÷ ${URLAUB_TEILER} (§ 9 Rahmenvereinbarung).
-                   Er wächst mit jeder erfassten Schicht und ist erst zum Jahresende endgültig.${
+                   Er wächst mit jedem erfassten Arbeitstag und ist erst zum Jahresende endgültig.${
                     k.uebertragBrutto > 0
                         ? k.uebertragVerfallen
                             ? ` Der Übertrag aus ${jahr - 1} ist zum 30. Juni ${jahr} verfallen.`
@@ -554,7 +712,9 @@
                 return;
             }
             // An einem Tag mit Schicht ist Urlaub widersprüchlich.
-            if (shifts().some(s => !isVacation(s) && s.employeeId === empId && s.date === datum)) {
+            // Eine Sonderzahlung am selben Tag ist kein Widerspruch — sie ist
+            // keine Arbeitszeit. Nur eine echte Schicht blockiert.
+            if (shifts().some(s => !isZeitlos(s) && s.employeeId === empId && s.date === datum)) {
                 toast('An diesem Tag ist bereits eine Schicht erfasst.', 'error');
                 return;
             }
@@ -625,10 +785,13 @@
     function urlaubsJahr(empId, jahr) {
         const j = String(jahr);
         const eigene = shifts().filter(s => s.employeeId === empId && (s.date || '').slice(0, 4) === j);
-        // Ein Arbeitstag ist jeder Kalendertag mit mindestens einem Einsatz —
-        // unabhängig davon, wie viele Räume oder Schichten an dem Tag lagen
-        // (§ 9 Rahmenvereinbarung). Deshalb ein Set über die Daten.
-        const arbeitstage = new Set(eigene.filter(s => !isVacation(s)).map(s => s.date)).size;
+        /* Ein Arbeitstag ist jeder Kalendertag mit mindestens einem Einsatz —
+         * unabhängig davon, wie viele Räume oder Schichten an dem Tag lagen
+         * (§ 9 Rahmenvereinbarung). Deshalb ein Set über die Daten.
+         * Urlaubstage zählen nicht mit, Sonderzahlungen ebenso wenig: an einem
+         * Tag mit Weihnachtsgeld wurde nicht zwangsläufig gearbeitet, und der
+         * Urlaubsanspruch darf davon nicht wachsen. */
+        const arbeitstage = new Set(eigene.filter(s => !isZeitlos(s)).map(s => s.date)).size;
         // EINMAL runden, auf die Stelle, in der Urlaubstage auch angezeigt
         // werden. Erst auf Cent und dann fürs Anzeigen nochmal zu runden würde
         // 0,8547 über 0,85 zu 0,8 verkürzen — der Rest ginge nicht mehr auf.
@@ -696,6 +859,11 @@
         if (isVacation(shift)) {
             return { minutes: 0, rate: 0, amount: Math.max(0, Number(shift.urlaubsBetrag) || 0) };
         }
+        // Sonderzahlungen tragen ebenfalls keine Arbeitszeit; ihr Betrag wurde
+        // vom Admin eingegeben und steht unverändert im Datensatz.
+        if (isSonderzahlung(shift)) {
+            return { minutes: 0, rate: 0, amount: Math.max(0, Number(shift.sonderBetrag) || 0) };
+        }
         const rates = wageRatesFor(shift.date);
         const rate = shift.isDouble ? rates.double : rates.single;
         const mins = minutesOf(shift.startTime, shift.endTime);
@@ -708,15 +876,19 @@
         /* Urlaubstage hängen an keinem Raum, also greift die Raum-Aufteilung
          * nicht. Sie werden 50/50 auf die Eigentümer verteilt — dieselbe Regel
          * wie bei der Monatspauschale, die ebenfalls raumlos ist. */
-        if (isVacation(shift)) {
+        if (isZeitlos(shift)) {
             const half = amount / 2;
+            /* Auf beitragsfreie Sonderzahlungen fallen KEINE Pauschalabgaben an
+             * — die 31,17 % bemessen sich am beitragspflichtigen Arbeitsentgelt,
+             * und genau das ist der Betrag nicht. */
+            const f = isBeitragsfrei(shift) ? 0 : factorV;
             return {
                 total: amount,
-                abgabenPct: ABGABEN_PCT,
+                abgabenPct: isBeitragsfrei(shift) ? 0 : ABGABEN_PCT,
                 owner1: half, owner2: half,
                 owner1Base: half, owner2Base: half,
-                owner1Abgaben: half * factorV, owner2Abgaben: half * factorV,
-                owner1Total: half * (1 + factorV), owner2Total: half * (1 + factorV),
+                owner1Abgaben: half * f, owner2Abgaben: half * f,
+                owner1Total: half * (1 + f), owner2Total: half * (1 + f),
             };
         }
         const rooms = settings().rooms || {};
@@ -755,9 +927,25 @@
         return shift.secondRoom || 'WS';
     }
 
-    function roomsLabel(shift) {
-        // Urlaubstage hängen an keinem Raum — an dieser Stelle steht das Kennwort.
+    /* Typ-Kennzeichnung für die Spalte neben dem Raum. Bei beitragsfreien
+     * Sonderzahlungen wird das ausdrücklich dazugeschrieben — man muss der
+     * Zeile ansehen können, warum der Betrag nicht im Brutto auftaucht. */
+    function typBadge(shift) {
         if (isVacation(shift)) return '<span class="badge urlaub">Urlaub</span>';
+        if (isSonderzahlung(shift)) {
+            return '<span class="badge sonder">Sonderzahlung</span>' +
+                (isBeitragsfrei(shift) ? ' <span class="badge frei">beitragsfrei</span>' : '');
+        }
+        return shift.isDouble
+            ? '<span class="badge double">Doppel</span>'
+            : '<span class="badge muted">Einfach</span>';
+    }
+
+    function roomsLabel(shift) {
+        // Urlaubstage und Sonderzahlungen hängen an keinem Raum — an dieser
+        // Stelle steht stattdessen das Kennwort.
+        if (isVacation(shift)) return '<span class="badge urlaub">Urlaub</span>';
+        if (isSonderzahlung(shift)) return '<span class="badge sonder">Sonderzahlung</span>';
         const primary = `<span class="badge">${shift.room}</span>`;
         if (!shift.isDouble) return primary;
         return `${primary} <span class="muted">+</span> <span class="badge">${secondRoomOf(shift)}</span>`;
@@ -944,10 +1132,11 @@
         if (cE <= cS) cE += 1440;
         for (const s of list) {
             if (ignoreId != null && s.id === ignoreId) continue;
-            // Urlaubstage haben keine Uhrzeiten — sie können sich mit nichts
-            // zeitlich überschneiden. Der Konflikt „Schicht am Urlaubstag" wird
-            // separat beim Speichern geprüft, nicht hier über Minuten.
-            if (isVacation(s)) continue;
+            // Urlaubstage und Sonderzahlungen haben keine Uhrzeiten — sie
+            // können sich mit nichts zeitlich überschneiden. Der Konflikt
+            // „Schicht am Urlaubstag" wird separat beim Speichern geprüft,
+            // nicht hier über Minuten.
+            if (isZeitlos(s)) continue;
             if (s.employeeId !== cand.employeeId) continue;
             if (s.date !== cand.date) continue;
             let sS = toMin(s.startTime), sE = toMin(s.endTime);
@@ -1789,8 +1978,16 @@
         // ohne Schicht, die App führt keine Urlaub/Krankheit-Listen).
         const yearMonths = new Set();
         list.forEach(s => {
-            const a = wageFor(s).amount;
-            if (s.date.startsWith(String(year) + '-')) { yearAmt += a; yearMonths.add(s.date.slice(0, 7)); }
+            // Beitragsfreie Sonderzahlungen zählen NICHT auf die Minijob-Grenze
+            // — sie sind kein Arbeitsentgelt (z. B. Arbeitgeberzuschuss zum
+            // Mutterschaftsgeld). Der Monat selbst zählt weiterhin mit, damit
+            // die Pauschalen-Logik unverändert bleibt.
+            const a = isBeitragsfrei(s) ? 0 : wageFor(s).amount;
+            if (s.date.startsWith(String(year) + '-')) {
+                yearAmt += a;
+                // Sonderzahlungen begründen keinen Pauschalenanspruch.
+                if (zaehltFuerPauschale(s)) yearMonths.add(s.date.slice(0, 7));
+            }
             if (s.date.startsWith(monthKey)) monthAmt += a;
         });
         // Monatspauschale gehört zum Brutto und zählt damit zur Minijob-Grenze —
@@ -1858,18 +2055,16 @@
             tr.dataset.id = s.id;
             tr.innerHTML = `
                 <td>${fmtDateDE(s.date)}</td>
-                <td>${isVacation(s) ? '<span class="muted">–</span>' : s.startTime}</td>
-                <td>${isVacation(s) ? '<span class="muted">–</span>' : s.endTime}</td>
-                <td class="num">${isVacation(s) ? '<span class="muted">–</span>' : fmtHours(w.minutes)}</td>
+                <td>${isZeitlos(s) ? '<span class="muted">–</span>' : s.startTime}</td>
+                <td>${isZeitlos(s) ? '<span class="muted">–</span>' : s.endTime}</td>
+                <td class="num">${isZeitlos(s) ? '<span class="muted">–</span>' : fmtHours(w.minutes)}</td>
                 <td>${roomsLabel(s)}</td>
-                <td>${isVacation(s)
-                        ? '<span class="badge urlaub">Urlaub</span>'
-                        : (s.isDouble ? '<span class="badge double">Doppel</span>' : '<span class="badge muted">Einfach</span>')}</td>
+                <td>${typBadge(s)}</td>
                 <td class="num">${fmtEUR(w.amount)}</td>
                 <td>${escapeHtml(s.note || '')}</td>
-                <td>${canDelete && !isVacation(s)
+                <td>${canDelete && !isZeitlos(s)
                     ? `<button class="btn small danger" data-del="${s.id}">Löschen</button>`
-                    : `<span class="muted small" title="${isVacation(s) ? 'Urlaub trägt der Admin ein' : 'Nur am selben Tag möglich'}">–</span>`}</td>
+                    : `<span class="muted small" title="${isZeitlos(s) ? 'Trägt der Admin ein' : 'Nur am selben Tag möglich'}">–</span>`}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -2146,6 +2341,15 @@
         if (rvBefreit) {
             return { brutto, rvAnteil: 0, auszahlung: brutto, mindestGreift: false };
         }
+        /* Kein beitragspflichtiges Entgelt im Monat, also auch kein Beitrag.
+         * Ohne diesen Zweig liefe der Monat in die Mindestbeitragsbemessung und
+         * zöge 32,55 EUR von einem Brutto von 0 ab — die Auszahlung würde
+         * negativ. Das trifft Monate, in denen nur beitragsfreie Zahlungen
+         * geflossen sind (z. B. Arbeitgeberzuschuss zum Mutterschaftsgeld ohne
+         * Schichten) und Urlaubstage, die mit 0,00 EUR eingetragen wurden. */
+        if (brutto === 0) {
+            return { brutto: 0, rvAnteil: 0, auszahlung: 0, mindestGreift: false };
+        }
         if (brutto < MIN_BEITRAGSBEMESSUNG_EUR) {
             const agAnteil = roundHalfUp(brutto * AG_PAUSCHALE_GEWERBE_PCT / 100);
             const rvAnteil = roundHalfUp(MIN_BEITRAG_GESAMT_EUR - agAnteil);
@@ -2176,11 +2380,18 @@
         shiftList.forEach(s => {
             const month = (s.date || '').slice(0, 7);
             const cur = byMonth.get(month) || 0;
-            // Monatsbrutto = Summe der stichtaggerechten Schicht-Beträge (ab
-            // Stichtag auf Cent gerundet, davor roh) — identisch zu dem, was in
-            // Stundenliste/PDF pro Schicht angezeigt wird.
-            byMonth.set(month, cur + shiftPayAmount(s));
+            /* Monatsbrutto = Summe der stichtaggerechten Schicht-Beträge (ab
+             * Stichtag auf Cent gerundet, davor roh) — identisch zu dem, was in
+             * Stundenliste/PDF pro Schicht angezeigt wird. Beitragsfreie
+             * Sonderzahlungen steuern hier 0 bei: sie sind kein Arbeitsentgelt
+             * und dürfen weder die 175-EUR-Schwelle noch die RV-Bemessung
+             * verschieben. Ausgezahlt werden sie weiter unten. */
+            byMonth.set(month, cur + shiftBruttoAmount(s));
         });
+        // Monate, in denen tatsächlich gearbeitet oder Urlaub genommen wurde —
+        // nur dort greift die Monatspauschale (siehe zaehltFuerPauschale).
+        const pauschalMonate = new Set(
+            shiftList.filter(zaehltFuerPauschale).map(s => (s.date || '').slice(0, 7)));
         let brutto = 0, rvAnteil = 0, auszahlung = 0;
         let pauschaleTotal = 0, pauschaleMonths = 0;
         const mindestMonths = [];
@@ -2188,7 +2399,7 @@
         [...byMonth.entries()].forEach(([month, schichtBrutto]) => {
             const befreit = rvBefreitForMonth(empId, month);
             if (befreit) befreitMonths.push(month);
-            const pauschale = monatspauschaleForMonth(empId, month);
+            const pauschale = pauschalMonate.has(month) ? monatspauschaleForMonth(empId, month) : 0;
             const monatsBrutto = schichtBrutto + pauschale;
             if (pauschale > 0) { pauschaleTotal += pauschale; pauschaleMonths += 1; }
             const p = payoutInfo(monatsBrutto, befreit);
@@ -2198,6 +2409,13 @@
             if (p.mindestGreift) mindestMonths.push(month);
         });
         const monatsZahl = byMonth.size;
+        /* Beitragsfreie Sonderzahlungen fließen NICHT ins Brutto, werden aber
+         * ausgezahlt — hier kommen sie zur Überweisungssumme dazu. Ohne das
+         * bekäme der Mitarbeiter z. B. den Arbeitgeberzuschuss zum Mutter-
+         * schaftsgeld nie zu sehen, obwohl er ihm zusteht. */
+        const beitragsfrei = roundHalfUp(
+            shiftList.reduce((sum, s) => isBeitragsfrei(s) ? sum + shiftPayAmount(s) : sum, 0));
+        auszahlung += beitragsfrei;
         /* Bereits vorab ausgezahltes Urlaubsentgelt im selben Zeitraum. Es ist
          * Teil von brutto und auszahlung — abgezogen wird es erst bei der
          * Frage, was am Monatsende noch zu überweisen ist. */
@@ -2208,6 +2426,7 @@
             brutto: roundHalfUp(brutto),
             rvAnteil: roundHalfUp(rvAnteil),
             auszahlung: roundHalfUp(auszahlung),
+            beitragsfreiTotal: beitragsfrei,
             vorabAusgezahlt: vorab,
             nochAuszuzahlen: roundHalfUp(auszahlung - vorab),
             mindestMonths: mindestMonths.sort(),
@@ -2273,12 +2492,17 @@
                 // Schleife stehen, sonst würde ein Statuswechsel auf alle Monate
                 // des Zeitraums durchschlagen.
                 const befreit = rvBefreitForMonth(empId, month);
-                // Pauschale dieses Monats — 0, wenn der Monat vor dem Stichtag liegt.
-                const pauschale = monatspauschaleForMonth(empId, month);
+                /* Pauschale dieses Monats — 0, wenn der Monat vor dem Stichtag
+                 * liegt oder wenn im Monat nur Sonderzahlungen stehen (dann
+                 * wurde nicht gearbeitet, siehe zaehltFuerPauschale). */
+                const pauschale = monthShifts.some(zaehltFuerPauschale)
+                    ? monatspauschaleForMonth(empId, month) : 0;
                 // Stichtaggerechte Schicht-Beträge (ab Stichtag auf Cent) — so
                 // sind Brutto/Auszahlung pro Schicht deckungsgleich mit der
                 // Stundenliste und die Summen gehen exakt auf.
-                const bruttoPerShift = monthShifts.map(s => shiftPayAmount(s));
+                // Beitragsfreie Sonderzahlungen tragen 0 bei — auf sie entfällt
+                // kein RV-Anteil, sie sind kein Arbeitsentgelt.
+                const bruttoPerShift = monthShifts.map(s => shiftBruttoAmount(s));
                 const schichtBrutto = bruttoPerShift.reduce((a, b) => a + b, 0);
                 // Monats-Brutto inkl. Pauschale ist die Basis für RV; verteilt
                 // wird der RV-Anteil aber nur auf die Schicht-Brutto-Anteile.
@@ -2287,10 +2511,23 @@
                 // ausgewiesen (über payoutInfoForShifts), NICHT auf Schichten.
                 const monatsBruttoTotal = schichtBrutto + pauschale;
                 const monthInfo = payoutInfo(monatsBruttoTotal, befreit);
+                /* Beitragsfreie Sonderzahlungen tragen keinen RV-Anteil und
+                 * werden in voller Höhe ausgezahlt. Sie werden hier gesetzt und
+                 * aus der Verteilung herausgenommen — bliebe eine von ihnen die
+                 * letzte Zeile, bekäme sie über den Cent-Ausgleich unten den
+                 * gesamten Rest-RV aufgebürdet. */
+                const verteilbar = [];
+                monthShifts.forEach((s, i) => {
+                    if (isBeitragsfrei(s)) {
+                        result.set(s.id, { rvAnteil: 0, auszahlung: roundHalfUp(shiftPayAmount(s)) });
+                    } else {
+                        verteilbar.push({ s, b: bruttoPerShift[i] });
+                    }
+                });
                 if (befreit || monatsBruttoTotal === 0) {
-                    monthShifts.forEach((s, i) => result.set(s.id, {
+                    verteilbar.forEach(({ s, b }) => result.set(s.id, {
                         rvAnteil: 0,
-                        auszahlung: roundHalfUp(bruttoPerShift[i]),
+                        auszahlung: roundHalfUp(b),
                     }));
                     return;
                 }
@@ -2298,9 +2535,8 @@
                 // des Monats-RV. Die Pauschale trägt den Rest — wird hier nicht
                 // pro Schicht verteilt.
                 let rvSoFar = 0;
-                monthShifts.forEach((s, i) => {
-                    const b = bruttoPerShift[i];
-                    const isLast = i === monthShifts.length - 1;
+                verteilbar.forEach(({ s, b }, i) => {
+                    const isLast = i === verteilbar.length - 1;
                     let rv;
                     if (isLast && pauschale === 0) {
                         // Cent-Drift in der letzten Schicht ausgleichen, wenn
@@ -2352,13 +2588,11 @@
             tr.innerHTML = `
                 <td>${fmtDateDE(s.date)}</td>
                 <td>${escapeHtml(empName(s.employeeId))}</td>
-                <td>${isVacation(s) ? '<span class="muted">–</span>' : s.startTime}</td>
-                <td>${isVacation(s) ? '<span class="muted">–</span>' : s.endTime}</td>
-                <td class="num">${isVacation(s) ? '<span class="muted">–</span>' : fmtHours(w.minutes)}</td>
+                <td>${isZeitlos(s) ? '<span class="muted">–</span>' : s.startTime}</td>
+                <td>${isZeitlos(s) ? '<span class="muted">–</span>' : s.endTime}</td>
+                <td class="num">${isZeitlos(s) ? '<span class="muted">–</span>' : fmtHours(w.minutes)}</td>
                 <td>${roomsLabel(s)}</td>
-                <td>${isVacation(s)
-                        ? '<span class="badge urlaub">Urlaub</span>'
-                        : (s.isDouble ? '<span class="badge double">Doppel</span>' : '<span class="badge muted">Einfach</span>')}</td>
+                <td>${typBadge(s)}</td>
                 <td class="num">${fmtEUR(show.amount)}</td>
                 <td class="num">${fmtEUR(show.owner1)}</td>
                 <td class="num">${fmtEUR(show.owner2)}</td>
@@ -2379,6 +2613,8 @@
         const factor = ABGABEN_PCT / 100;
         const empMonthsMap = new Map();
         list.forEach(s => {
+            // Sonderzahlungen begründen keinen Pauschalenanspruch.
+            if (!zaehltFuerPauschale(s)) return;
             const month = (s.date || '').slice(0, 7);
             if (!empMonthsMap.has(s.employeeId)) empMonthsMap.set(s.employeeId, new Set());
             empMonthsMap.get(s.employeeId).add(month);
@@ -2400,16 +2636,38 @@
         // fassung ist in sich stimmig und Eigentümer 1 + Eigentümer 2 = Verdienst. Davor die
         // alte Rechnung (Rohsummen, Rundung erst in der Anzeige) — unverändert.
         const agg = { sBase: sSum + pauschaleSDisp, bBase: bSum + pauschaleBDisp };
+        /* Beitragsfreie Sonderzahlungen stecken in sBase/bBase (sie sind echte
+         * Kosten), tragen aber keine Pauschalabgaben. Die Abgaben-Grundlage ist
+         * deshalb um ihre Hälften vermindert — sonst berechnete die Zusammen-
+         * fassung 31,17 % auf einen Betrag, für den sie nicht anfallen. */
+        let frei1 = 0, frei2 = 0;
+        list.forEach((s, i) => {
+            if (!isBeitragsfrei(s)) return;
+            frei1 += shows[i].owner1;
+            frei2 += shows[i].owner2;
+        });
+        const abgBase1 = agg.sBase - frei1;
+        const abgBase2 = agg.bBase - frei2;
+        const hatFreie = frei1 !== 0 || frei2 !== 0;
         if (hasV2) {
-            agg.sAbg = roundHalfUp(agg.sBase * factor);
-            agg.bAbg = roundHalfUp(agg.bBase * factor);
+            agg.sAbg = roundHalfUp(abgBase1 * factor);
+            agg.bAbg = roundHalfUp(abgBase2 * factor);
             agg.sTotal = agg.sBase + agg.sAbg;
             agg.bTotal = agg.bBase + agg.bAbg;
-        } else {
+        } else if (!hatFreie) {
+            // Alte Rechnung bit-genau beibehalten: sBase * (1 + factor) kann
+            // sich in der letzten Stelle von sBase + sBase * factor
+            // unterscheiden, und frühere Monate müssen exakt reproduzierbar
+            // bleiben (siehe CALC_V2_FROM_MONTH).
             agg.sAbg = agg.sBase * factor;
             agg.bAbg = agg.bBase * factor;
             agg.sTotal = agg.sBase * (1 + factor);
             agg.bTotal = agg.bBase * (1 + factor);
+        } else {
+            agg.sAbg = abgBase1 * factor;
+            agg.bAbg = abgBase2 * factor;
+            agg.sTotal = agg.sBase + agg.sAbg;
+            agg.bTotal = agg.bBase + agg.bAbg;
         }
         const totalAmt = amtSum + pauschaleAmtDisp;
         let summaryHtmlOut = adminSummaryHtml(list.length, totalMin, totalAmt, agg);
@@ -2439,6 +2697,12 @@
                 `<div class="stat"><div class="label">Brutto ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.brutto)}</div></div>` +
                 `<div class="stat"><div class="label">${rvLabel}</div><div class="value">${p.alleBefreit ? '–' : '− ' + fmtEUR(p.rvAnteil)}</div></div>` +
                 `<div class="stat"><div class="label">Auszahlung an ${escapeHtml(empName(empId))}</div><div class="value">${fmtEUR(p.auszahlung)}</div></div>`;
+            // Beitragsfreies getrennt zeigen — sonst sieht es wie ein Fehler
+            // aus, dass die Auszahlung über dem Brutto liegt.
+            if (p.beitragsfreiTotal > 0) {
+                summaryHtmlOut +=
+                    `<div class="stat"><div class="label">Beitragsfrei (nicht im Brutto)</div><div class="value">${fmtEUR(p.beitragsfreiTotal)}</div></div>`;
+            }
             // Vorab ausgezahltes Urlaubsentgelt absetzen — es steckt bereits in
             // Brutto und Auszahlung, darf aber nicht erneut überwiesen werden.
             if (p.vorabAusgezahlt > 0) {
@@ -2606,11 +2870,15 @@
             const hours = w.minutes / 60;
             tot.hours += hours;
             tot.amt += show.amount; tot.sBase += show.owner1; tot.bBase += show.owner2;
-            // Urlaubstage haben keinen Raum; in den Raum-Spalten steht das
-            // Kennwort, damit die Zeile in der Auswertung eindeutig ist.
+            // Urlaubstage und Sonderzahlungen haben keinen Raum; in den
+            // Raum-Spalten steht das Kennwort, damit die Zeile in der
+            // Auswertung eindeutig ist.
             const urlaub = isVacation(s);
-            const sec = urlaub ? null : secondRoomOf(s);
-            const r1name = urlaub ? 'Urlaub' : (settings().rooms[s.room]?.name || '');
+            const sonder = isSonderzahlung(s);
+            const sec = isZeitlos(s) ? null : secondRoomOf(s);
+            const r1name = urlaub ? 'Urlaub'
+                : sonder ? 'Sonderzahlung'
+                : (settings().rooms[s.room]?.name || '');
             const r2name = sec ? (settings().rooms[sec]?.name || '') : '';
             // Status des MONATS dieser Schicht, nicht der aktuelle Status des
             // Mitarbeiters — sonst würde ein Statuswechsel alte Zeilen umschreiben.
@@ -2618,9 +2886,12 @@
             const shiftPay = perShift.get(s.id) || { rvAnteil: 0, auszahlung: show.amount };
             rows.push([
                 s.date, empName(s.employeeId), s.startTime, s.endTime,
-                hours.toFixed(2), urlaub ? 'URLAUB' : s.room, sec || '',
+                hours.toFixed(2),
+                urlaub ? 'URLAUB' : sonder ? 'SONDERZAHLUNG' : s.room, sec || '',
                 sec ? `${r1name} + ${r2name}` : r1name,
-                urlaub ? 'Urlaub' : (s.isDouble ? 'Doppel' : 'Einfach'),
+                urlaub ? 'Urlaub'
+                    : sonder ? (isBeitragsfrei(s) ? 'Sonderzahlung beitragsfrei' : 'Sonderzahlung beitragspflichtig')
+                    : (s.isDouble ? 'Doppel' : 'Einfach'),
                 w.rate.toFixed(2), show.amount.toFixed(2),
                 befreit ? '0,00' : shiftPay.rvAnteil.toFixed(2),
                 shiftPay.auszahlung.toFixed(2),
@@ -2679,9 +2950,15 @@
             // Spalten für die Vorab-Auszahlung nur, wenn es sie im Zeitraum gibt —
             // sonst bliebe in jeder Auswertung eine leere Doppelspalte stehen.
             const hasAnyVorab = [...byEmp.values()].some(a => a.vorabAusgezahlt > 0);
+            // Beitragsfreie Sonderzahlungen bekommen eine eigene Spalte, weil
+            // sie in "Brutto" bewusst NICHT enthalten, in "Auszahlung" aber
+            // sehr wohl enthalten sind — ohne Spalte ginge die Zeile nicht auf.
+            const hasAnyFrei = [...byEmp.values()].some(a => a.beitragsfreiTotal > 0);
             const kopf = ['Mitarbeiter', 'Brutto (EUR)'];
             if (hasAnyPauschale) kopf.push('davon Pauschale (EUR)');
-            kopf.push('RV-Anteil AN (EUR)', 'Auszahlung (EUR)');
+            kopf.push('RV-Anteil AN (EUR)');
+            if (hasAnyFrei) kopf.push('Beitragsfrei, nicht im Brutto (EUR)');
+            kopf.push('Auszahlung (EUR)');
             if (hasAnyVorab) kopf.push('davon vorab ausgezahlt (EUR)', 'Noch zu überweisen (EUR)');
             rows.push(kopf);
             [...byEmp.entries()]
@@ -2700,6 +2977,7 @@
                     ];
                     if (hasAnyPauschale) row.push(roundHalfUp(a.pauschaleTotal).toFixed(2));
                     row.push(a.befreit ? '0,00' : roundHalfUp(a.rvAnteil).toFixed(2));
+                    if (hasAnyFrei) row.push(roundHalfUp(a.beitragsfreiTotal).toFixed(2));
                     row.push(roundHalfUp(a.auszahlung).toFixed(2));
                     if (hasAnyVorab) {
                         row.push(roundHalfUp(a.vorabAusgezahlt).toFixed(2));
@@ -2707,6 +2985,15 @@
                     }
                     rows.push(row);
                 });
+        }
+        // Erläuterung zu beitragsfreien Sonderzahlungen — ohne sie wirkt es wie
+        // ein Rechenfehler, dass die Auszahlung größer als das Brutto ist.
+        if ([...byEmp.values()].some(a => a.beitragsfreiTotal > 0)) {
+            rows.push([]);
+            rows.push(['Hinweis beitragsfreie Sonderzahlungen']);
+            rows.push(['Beitragsfrei gestellte Sonderzahlungen sind kein Arbeitsentgelt (z. B. Arbeitgeberzuschuss zum Mutterschaftsgeld, § 1 Abs. 1 Nr. 6 SvEV).']);
+            rows.push(['Sie zählen NICHT ins Brutto, nicht auf die Minijob-Grenze, nicht in die RV-Bemessung und tragen keine Pauschalabgaben — ausgezahlt werden sie trotzdem.']);
+            rows.push(['Die Auszahlung kann dadurch höher sein als das Brutto. Der Grund jeder Zahlung steht in der Notiz-Spalte der jeweiligen Zeile.']);
         }
         // Erläuterung zur Vorab-Auszahlung, damit die Spalten ohne Rückfrage
         // verständlich sind — die Buchhaltung sieht nur die Datei.
@@ -2935,6 +3222,14 @@
                     return [fmtDateDE(s.date), 'Urlaub', '', '', '',
                             shownAmounts[i].toFixed(2).replace('.', ',') + ' EUR'];
                 }
+                /* Sonderzahlungen zeigen den Grund direkt in der Zeile — ohne
+                 * ihn wäre aus dem PDF nicht ersichtlich, wofür gezahlt wurde,
+                 * und bei beitragsfreien Beträgen fehlte die Begründung. */
+                if (isSonderzahlung(s)) {
+                    const grund = 'Sonderzahlung' + (isBeitragsfrei(s) ? ' (beitragsfrei)' : '');
+                    return [fmtDateDE(s.date), grund, s.note || '', '', '',
+                            shownAmounts[i].toFixed(2).replace('.', ',') + ' EUR'];
+                }
                 return [
                     fmtDateDE(s.date),
                     s.startTime,
@@ -2970,17 +3265,31 @@
             // aus den Schichten ableiten lässt.
             const pdfMonth = (list[0]?.date || '').slice(0, 7);
             const pauschale = monatspauschaleForMonth(emp.id, pdfMonth);
-            const bruttoGesamt = totalAmt + pauschale;
 
-            // Urlaubsentgelt getrennt ausweisen, damit die Lohnabrechnung zeigt,
-            // welcher Teil des Brutto nicht aus geleisteter Arbeit stammt.
+            // Urlaubsentgelt und Sonderzahlungen getrennt ausweisen, damit die
+            // Lohnabrechnung zeigt, welcher Teil des Brutto nicht aus
+            // geleisteter Arbeit stammt.
             let urlaubAmt = 0, urlaubTage = 0;
-            list.forEach((s, i) => { if (isVacation(s)) { urlaubAmt += shownAmounts[i]; urlaubTage += 1; } });
-            const schichtAmt = roundHalfUp(totalAmt - urlaubAmt);
+            let sonderPflicht = 0, sonderFrei = 0;
+            list.forEach((s, i) => {
+                if (isVacation(s)) { urlaubAmt += shownAmounts[i]; urlaubTage += 1; }
+                else if (isSonderzahlung(s)) {
+                    if (isBeitragsfrei(s)) sonderFrei += shownAmounts[i];
+                    else sonderPflicht += shownAmounts[i];
+                }
+            });
+            sonderPflicht = roundHalfUp(sonderPflicht);
+            sonderFrei = roundHalfUp(sonderFrei);
+            const schichtAmt = roundHalfUp(totalAmt - urlaubAmt - sonderPflicht - sonderFrei);
+            /* Beitragsfreie Sonderzahlungen gehören NICHT ins Brutto — sonst
+             * verschöben sie Minijob-Grenze, Mindestbeitrag und RV-Bemessung.
+             * Ausgezahlt werden sie trotzdem (siehe weiter unten). */
+            const bruttoGesamt = roundHalfUp(totalAmt - sonderFrei + pauschale);
 
+            const hatZusatz = pauschale > 0 || urlaubTage > 0 || sonderPflicht > 0 || sonderFrei > 0;
             let yAfter = doc.lastAutoTable.finalY + 20;
             doc.setFontSize(11);
-            if (pauschale > 0 || urlaubTage > 0) {
+            if (hatZusatz) {
                 doc.text(`Lohn aus Schichten:`, 40, yAfter);
                 doc.text(`${(totalMin / 60).toFixed(2).replace('.', ',')} Std`, 300, yAfter, { align: 'right' });
                 doc.text(`${fmtEUR(schichtAmt)}`, 540, yAfter, { align: 'right' });
@@ -2988,6 +3297,11 @@
                 if (urlaubTage > 0) {
                     doc.text(`+ Urlaubsentgelt (${urlaubTage} Tag${urlaubTage === 1 ? '' : 'e'}):`, 40, yAfter);
                     doc.text(`${fmtEUR(roundHalfUp(urlaubAmt))}`, 540, yAfter, { align: 'right' });
+                    yAfter += 16;
+                }
+                if (sonderPflicht > 0) {
+                    doc.text(`+ Sonderzahlung (beitragspflichtig):`, 40, yAfter);
+                    doc.text(`${fmtEUR(sonderPflicht)}`, 540, yAfter, { align: 'right' });
                     yAfter += 16;
                 }
                 if (pauschale > 0) {
@@ -2998,11 +3312,18 @@
             }
             doc.setFont(undefined, 'bold');
             doc.text(`Brutto-Lohn:`, 40, yAfter);
-            if (pauschale === 0 && urlaubTage === 0) {
+            if (!hatZusatz) {
                 doc.text(`${(totalMin / 60).toFixed(2).replace('.', ',')} Std`, 300, yAfter, { align: 'right' });
             }
             doc.text(`${fmtEUR(bruttoGesamt)}`, 540, yAfter, { align: 'right' });
             doc.setFont(undefined, 'normal');
+            // Beitragsfreies außerhalb des Brutto ausweisen — sichtbar, aber
+            // erkennbar nicht Teil der Beitragsbemessung.
+            if (sonderFrei > 0) {
+                yAfter += 16;
+                doc.text(`Beitragsfreie Sonderzahlung (nicht im Brutto):`, 40, yAfter);
+                doc.text(`${fmtEUR(sonderFrei)}`, 540, yAfter, { align: 'right' });
+            }
 
             // RV-Anteil Arbeitnehmer + Auszahlung anzeigen. payoutInfo erwartet
             // ein Monatsbrutto (inkl. Pauschale) und wendet bei Brutto < 175 EUR
@@ -3029,11 +3350,23 @@
              * Auszahlung oben; hier wird es abgesetzt, damit die letzte Zeile
              * zeigt, was am Monatsende TATSÄCHLICH noch zu überweisen ist. */
             const vorabAmt = vorabAusgezahltSumme(list);
-            const nochOffen = roundHalfUp(p.auszahlung - vorabAmt);
+            /* Die beitragsfreie Sonderzahlung war nicht im Brutto und damit
+             * nicht in p.auszahlung — sie wird dem Mitarbeiter aber ausgezahlt
+             * und kommt hier zur Überweisungssumme dazu. */
+            const auszahlungGesamt = roundHalfUp(p.auszahlung + sonderFrei);
+            const nochOffen = roundHalfUp(auszahlungGesamt - vorabAmt);
             let zeileY = yAfter + 38;
+            if (sonderFrei > 0) {
+                doc.text(`Auszahlung aus Brutto:`, 40, zeileY);
+                doc.text(fmtEUR(p.auszahlung), 540, zeileY, { align: 'right' });
+                zeileY += 16;
+                doc.text(`+ beitragsfreie Sonderzahlung:`, 40, zeileY);
+                doc.text(fmtEUR(sonderFrei), 540, zeileY, { align: 'right' });
+                zeileY += 16;
+            }
             if (vorabAmt > 0) {
                 doc.text(`Auszahlung gesamt:`, 40, zeileY);
-                doc.text(fmtEUR(p.auszahlung), 540, zeileY, { align: 'right' });
+                doc.text(fmtEUR(auszahlungGesamt), 540, zeileY, { align: 'right' });
                 zeileY += 16;
                 doc.text(`abzüglich vorab ausgezahltes Urlaubsentgelt:`, 40, zeileY);
                 doc.text(`− ${fmtEUR(vorabAmt)}`, 540, zeileY, { align: 'right' });
@@ -3041,7 +3374,7 @@
             }
             doc.setFont(undefined, 'bold');
             doc.text(vorabAmt > 0 ? `Noch zu überweisen:` : `Auszahlung an Mitarbeiter:`, 40, zeileY);
-            doc.text(fmtEUR(vorabAmt > 0 ? nochOffen : p.auszahlung), 540, zeileY, { align: 'right' });
+            doc.text(fmtEUR(vorabAmt > 0 ? nochOffen : auszahlungGesamt), 540, zeileY, { align: 'right' });
             doc.setFont(undefined, 'normal');
             // Der Vorschuss kann den Monatsrest übersteigen, wenn der Urlaub den
             // Monat dominiert — dann steht hier ein Minus, das der Admin sehen muss.
@@ -3166,6 +3499,7 @@
                     <button class="btn small" data-emp-assign="${e.id}">Arbeitgeber wechseln</button>
                     <button class="btn small" data-emp-pauschale="${e.id}">Pauschale ändern</button>
                     <button class="btn small" data-emp-urlaub="${e.id}">Urlaub</button>
+                    <button class="btn small" data-emp-sonder="${e.id}">Sonderzahlung</button>
                     <button class="btn small" data-emp-admin="${e.id}">${e.isAdmin ? 'Admin entziehen' : 'Admin geben'}</button>
                     <button class="btn small" data-emp-acc="${e.id}">${e.isAccountant ? 'Buchhaltung entziehen' : 'Buchhaltung geben'}</button>
                     <button class="btn small" data-emp-rv="${e.id}">RV-Status ändern</button>
@@ -3274,6 +3608,9 @@
         });
         tbody.querySelectorAll('[data-emp-urlaub]').forEach(b => b.onclick = () => {
             openUrlaubModal(Number(b.dataset.empUrlaub));
+        });
+        tbody.querySelectorAll('[data-emp-sonder]').forEach(b => b.onclick = () => {
+            openSonderzahlungModal(Number(b.dataset.empSonder));
         });
         tbody.querySelectorAll('[data-emp-pauschale]').forEach(b => b.onclick = async () => {
             const emp = employees().find(x => x.id === Number(b.dataset.empPauschale));
