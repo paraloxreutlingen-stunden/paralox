@@ -330,6 +330,13 @@
             const b = Number(s.sonderBetrag);
             s.sonderBetrag = isFinite(b) && b >= 0 ? b : 0;
             s.beitragsfrei = !!s.beitragsfrei;
+            /* Wer die Kosten trägt. Fehlt der Wert — und er fehlt in jedem
+             * Datensatz, der vor dieser Fassung entstanden ist — bleibt es bei
+             * 50/50. Die Neuerung verändert damit keinen bereits abgerechneten
+             * Monat von selbst. */
+            if (s.kostenTraeger !== 'owner1' && s.kostenTraeger !== 'owner2') {
+                s.kostenTraeger = 'split';
+            }
             // Wie Urlaubstage: keine Arbeitszeit, kein Raum.
             s.startTime = '';
             s.endTime = '';

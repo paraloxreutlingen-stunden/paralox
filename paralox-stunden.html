@@ -1777,6 +1777,13 @@ window.ParaloxConfig = {
             const b = Number(s.sonderBetrag);
             s.sonderBetrag = isFinite(b) && b >= 0 ? b : 0;
             s.beitragsfrei = !!s.beitragsfrei;
+            /* Wer die Kosten trägt. Fehlt der Wert — und er fehlt in jedem
+             * Datensatz, der vor dieser Fassung entstanden ist — bleibt es bei
+             * 50/50. Die Neuerung verändert damit keinen bereits abgerechneten
+             * Monat von selbst. */
+            if (s.kostenTraeger !== 'owner1' && s.kostenTraeger !== 'owner2') {
+                s.kostenTraeger = 'split';
+            }
             // Wie Urlaubstage: keine Arbeitszeit, kein Raum.
             s.startTime = '';
             s.endTime = '';
@@ -2388,6 +2395,24 @@ window.ParaloxConfig = {
      * bei Brutto, Minijob-Grenze, RV-Bemessung und Pauschalabgaben. */
     const isBeitragsfrei = s => isSonderzahlung(s) && !!s.beitragsfrei;
 
+    /* Wer die Kosten eines zeitlosen Eintrags trägt.
+     *
+     * 'split'  = 50/50 auf beide Eigentümer, wie bisher und wie bei Urlaub
+     * 'owner1' = vollständig beim ersten Eigentümer
+     * 'owner2' = vollständig beim zweiten Eigentümer
+     *
+     * Gesetzt werden kann das nur an Sonderzahlungen. Gebraucht wird es, wenn
+     * eine Zahlung wirtschaftlich nur einem Eigentümer gehört: Mutterschutz-
+     * lohn und Zuschuss zum Mutterschaftsgeld bekommt der Arbeitgeber über die
+     * Umlage U2 zu 100 % erstattet, also darf die Hälfte davon nicht beim
+     * anderen Eigentümer hängen bleiben. Alles ohne gesetzten Wert bleibt
+     * 'split'. */
+    function kostenTraegerOf(shift) {
+        if (!isSonderzahlung(shift)) return 'split';
+        const t = shift.kostenTraeger;
+        return (t === 'owner1' || t === 'owner2') ? t : 'split';
+    }
+
     /* Der Teil eines Eintrags, der als Arbeitsentgelt zählt. Für beitragsfreie
      * Sonderzahlungen 0, sonst der volle Betrag. Überall dort zu verwenden, wo
      * es um Brutto, Minijob-Grenze oder Beitragsbemessung geht — NICHT dort,
@@ -2499,6 +2524,57 @@ window.ParaloxConfig = {
         const modal = $('#modal');
         const jahr = new Date().getFullYear();
 
+        /* Art der Zahlung. Sie entscheidet zwei Dinge auf einmal: ob der Betrag
+         * beitragspflichtiges Arbeitsentgelt ist und was als Grund in den
+         * Lohnunterlagen steht.
+         *
+         * Vorher musste man dafür das Häkchen "beitragsfrei" selbst richtig
+         * setzen. Bei Mutterschaft liegt die Grenze genau dazwischen und der
+         * Unterschied ist Geld: Der Mutterschutzlohn während eines
+         * Beschäftigungsverbotes IST Arbeitsentgelt (§ 18 MuSchG) und trägt
+         * Pauschalabgaben, der Zuschuss zum Mutterschaftsgeld während der
+         * Schutzfrist ist KEINES (§ 1 Abs. 1 Nr. 6 SvEV). Wer das verwechselt,
+         * meldet entweder zu wenig Entgelt oder zahlt Abgaben auf etwas, das
+         * keine trägt. */
+        const SONDER_ARTEN = {
+            lohn: {
+                label: 'Weihnachtsgeld, Prämie, Nachzahlung',
+                beitragsfrei: false,
+                notiz: '',
+                hinweis: 'Zählt wie normaler Lohn: ins Brutto, auf die Minijob-Grenze und mit Pauschalabgaben.',
+            },
+            mutterschutzlohn: {
+                label: 'Mutterschutzlohn bei Beschäftigungsverbot',
+                beitragsfrei: false,
+                notiz: 'Mutterschutzlohn',
+                hinweis: 'Beitragspflichtiges Arbeitsentgelt nach § 18 MuSchG. Zählt ins Brutto und trägt Pauschalabgaben. Der Arbeitgeber bekommt Entgelt und Abgaben über die Umlage U2 zu 100 % erstattet, deshalb gehören die Kosten zu ihm allein.',
+            },
+            zuschuss: {
+                label: 'Zuschuss zum Mutterschaftsgeld',
+                beitragsfrei: true,
+                notiz: 'Arbeitgeberzuschuss zum Mutterschaftsgeld',
+                hinweis: 'Kein Arbeitsentgelt (§ 1 Abs. 1 Nr. 6 SvEV). Nicht ins Brutto, nicht auf die Minijob-Grenze, keine Pauschalabgaben. Ausgezahlt wird der Betrag trotzdem, und auch er wird über U2 erstattet.',
+            },
+            frei: {
+                label: 'Andere beitragsfreie Zahlung',
+                beitragsfrei: true,
+                notiz: '',
+                hinweis: 'Zählt nicht ins Brutto, nicht auf die Minijob-Grenze und trägt keine Pauschalabgaben. Ausgezahlt wird der Betrag trotzdem.',
+            },
+        };
+        const MONATE_LANG = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+            'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+        /* Vorschlag für die Pflicht-Notiz: Art plus Monat des gewählten Datums,
+         * damit in den Unterlagen nicht nur "Mutterschutzlohn" steht, sondern
+         * für welchen Monat. */
+        const notizVorschlag = (artKey, datum) => {
+            const art = SONDER_ARTEN[artKey];
+            if (!art || !art.notiz) return '';
+            const m = /^(\d{4})-(\d{2})-/.exec(String(datum || ''));
+            if (!m) return art.notiz;
+            return art.notiz + ' ' + MONATE_LANG[Number(m[2]) - 1] + ' ' + m[1];
+        };
+
         const zeichne = () => {
             const heute = todayISO();
             const eigene = shifts()
@@ -2514,7 +2590,8 @@ window.ParaloxConfig = {
                 ? eigene.map(s => `<li>
                         <span>${escapeHtml(fmtDateDE(s.date))} <span class="muted">— ${fmtEUR(Number(s.sonderBetrag) || 0)}</span>
                         ${s.beitragsfrei ? '<span class="badge frei">beitragsfrei</span>' : ''}
-                        <br><span class="muted small">${escapeHtml(s.note || '')}</span></span>
+                        <br><span class="muted small">${escapeHtml(s.note || '')}</span>
+                        <br><span class="muted small">Kosten: ${escapeHtml(kostenTraegerText(s))}</span></span>
                         <button class="btn small danger" data-sonder-del="${s.id}">Löschen</button>
                     </li>`).join('')
                 : '<li class="muted">Noch keine Sonderzahlungen in diesem Jahr.</li>';
@@ -2530,20 +2607,63 @@ window.ParaloxConfig = {
                 <label>Betrag in EUR
                     <input type="number" step="0.01" min="0" id="sonderBetrag" value="" autocomplete="off">
                 </label>
+                <label>Art der Zahlung
+                    <select id="sonderArt">
+                        ${Object.keys(SONDER_ARTEN).map(k =>
+                            `<option value="${k}">${escapeHtml(SONDER_ARTEN[k].label)}</option>`).join('')}
+                    </select>
+                </label>
+                <p class="muted small" id="sonderHinweis">${escapeHtml(SONDER_ARTEN.lohn.hinweis)}</p>
                 <label>Grund der Zahlung (Pflicht)
                     <input type="text" id="sonderNotiz" maxlength="200" autocomplete="off"
                         placeholder="z.B. Weihnachtsgeld oder Arbeitgeberzuschuss Mutterschaftsgeld">
                 </label>
-                <label class="check">
-                    <input type="checkbox" id="sonderFrei"> beitragsfrei
+                <label>Kosten trägt
+                    <select id="sonderKosten">
+                        <option value="split">beide je zur Hälfte</option>
+                        <option value="owner1">${escapeHtml(owner1Label())} allein</option>
+                        <option value="owner2">${escapeHtml(owner2Label())} allein</option>
+                    </select>
                 </label>
-                <p class="muted small">Angehakt zählt der Betrag <strong>nicht</strong> ins Brutto, nicht auf die
-                   Minijob-Grenze und trägt keine Pauschalabgaben — für Zahlungen, die kein Arbeitsentgelt sind
-                   (z. B. Arbeitgeberzuschuss zum Mutterschaftsgeld, § 1 Abs. 1 Nr. 6 SvEV).
-                   Ausgezahlt wird er trotzdem. Nicht angehakt zählt er wie normaler Lohn (Weihnachtsgeld, Prämien).</p>
+                <p class="muted small">Sonderzahlungen hängen an keinem Raum, deshalb greift die Raum-Aufteilung
+                   nicht. Ohne Angabe werden sie wie Urlaubstage halbiert. Bei Mutterschutzlohn und Zuschuss zum
+                   Mutterschaftsgeld gehört der Betrag dem Arbeitgeber allein, weil nur er ihn über die Umlage U2
+                   zurückbekommt.</p>
                 <h4>Sonderzahlungen ${jahr}</h4>
                 <ul class="urlaub-liste">${liste}</ul>
             `;
+
+            /* Die Art-Auswahl füllt den Grund vor und stellt den Kostenträger
+             * passend ein. Beides bleibt danach frei änderbar — der Vorschlag
+             * wird nur gesetzt, solange das Feld noch unberührt ist bzw. noch
+             * genau auf dem letzten Vorschlag steht. */
+            const artSel = $('#sonderArt');
+            const kostenSel = $('#sonderKosten');
+            const notizFeld = $('#sonderNotiz');
+            const datumFeld = $('#sonderDatum');
+            let letzterVorschlag = '';
+            const artAnwenden = () => {
+                const key = artSel.value;
+                const art = SONDER_ARTEN[key] || SONDER_ARTEN.lohn;
+                $('#sonderHinweis').textContent = art.hinweis;
+                const vorschlag = notizVorschlag(key, datumFeld.value);
+                if (vorschlag && (!notizFeld.value.trim() || notizFeld.value === letzterVorschlag)) {
+                    notizFeld.value = vorschlag;
+                }
+                letzterVorschlag = vorschlag;
+                /* Mutterschaftsbezogene Zahlungen gehören dem Arbeitgeber
+                 * dieser Person allein, weil nur er die U2-Erstattung erhält.
+                 * Voreingestellt wird daher sein Eigentümer-Eintrag. */
+                if (key === 'mutterschutzlohn' || key === 'zuschuss') {
+                    kostenSel.value = empAssignment(empId) === 'owner2' ? 'owner2' : 'owner1';
+                }
+            };
+            artSel.onchange = artAnwenden;
+            datumFeld.addEventListener('change', () => {
+                const vorschlag = notizVorschlag(artSel.value, datumFeld.value);
+                if (vorschlag && notizFeld.value === letzterVorschlag) notizFeld.value = vorschlag;
+                letzterVorschlag = vorschlag;
+            });
 
             $('#modalBody').querySelectorAll('[data-sonder-del]').forEach(btn => btn.onclick = () => {
                 const id = Number(btn.dataset.sonderDel);
@@ -2594,7 +2714,10 @@ window.ParaloxConfig = {
                 isVacation: false,
                 isSonderzahlung: true,
                 sonderBetrag: roundHalfUp(betrag),
-                beitragsfrei: $('#sonderFrei').checked,
+                beitragsfrei: !!(SONDER_ARTEN[$('#sonderArt').value] || SONDER_ARTEN.lohn).beitragsfrei,
+                sonderArt: $('#sonderArt').value,
+                kostenTraeger: $('#sonderKosten').value === 'owner1' ? 'owner1'
+                    : ($('#sonderKosten').value === 'owner2' ? 'owner2' : 'split'),
                 note: notiz,
                 createdAt: new Date().toISOString(),
             });
@@ -2903,7 +3026,15 @@ window.ParaloxConfig = {
          * nicht. Sie werden 50/50 auf die Eigentümer verteilt — dieselbe Regel
          * wie bei der Monatspauschale, die ebenfalls raumlos ist. */
         if (isZeitlos(shift)) {
-            const half = amount / 2;
+            /* Wer zahlt, steht bei Sonderzahlungen im Eintrag selbst
+             * (kostenTraeger). 'split' verteilt 50/50 — das ist der Default
+             * und damit weiter die Regel für Urlaubstage und für jeden
+             * Datensatz, der vor dieser Fassung entstanden ist. */
+            const traeger = kostenTraegerOf(shift);
+            let base1, base2;
+            if (traeger === 'owner1') { base1 = amount; base2 = 0; }
+            else if (traeger === 'owner2') { base1 = 0; base2 = amount; }
+            else { base1 = amount / 2; base2 = amount / 2; }
             /* Auf beitragsfreie Sonderzahlungen fallen KEINE Pauschalabgaben an
              * — die 31,17 % bemessen sich am beitragspflichtigen Arbeitsentgelt,
              * und genau das ist der Betrag nicht. */
@@ -2911,10 +3042,10 @@ window.ParaloxConfig = {
             return {
                 total: amount,
                 abgabenPct: isBeitragsfrei(shift) ? 0 : ABGABEN_PCT,
-                owner1: half, owner2: half,
-                owner1Base: half, owner2Base: half,
-                owner1Abgaben: half * f, owner2Abgaben: half * f,
-                owner1Total: half * (1 + f), owner2Total: half * (1 + f),
+                owner1: base1, owner2: base2,
+                owner1Base: base1, owner2Base: base2,
+                owner1Abgaben: base1 * f, owner2Abgaben: base2 * f,
+                owner1Total: base1 * (1 + f), owner2Total: base2 * (1 + f),
             };
         }
         const rooms = settings().rooms || {};
@@ -4229,6 +4360,15 @@ window.ParaloxConfig = {
     // Vornamen fest in Überschriften und Exportspalten standen.
     const owner1Label = () => ownerLabel('owner1');
     const owner2Label = () => ownerLabel('owner2');
+
+    /* Klartext für die Kostenverteilung eines zeitlosen Eintrags — für Listen
+     * und Dialoge, damit man einer Sonderzahlung ansieht, bei wem sie landet. */
+    function kostenTraegerText(shift) {
+        const t = kostenTraegerOf(shift);
+        if (t === 'owner1') return owner1Label() + ' allein';
+        if (t === 'owner2') return owner2Label() + ' allein';
+        return 'beide je zur Hälfte';
+    }
 
     /* Setzt die Spaltenköpfe, die im HTML nur generisch vorbelegt sind, auf die
      * konfigurierten Eigentümer-Labels. Muss bei jedem Rendern laufen, nicht

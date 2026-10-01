@@ -12,7 +12,7 @@
  */
 'use strict';
 
-const CACHE_VERSION = 'paralox-v6';
+const CACHE_VERSION = 'paralox-v7';
 const APP_SHELL = [
     './',
     './index.html',
