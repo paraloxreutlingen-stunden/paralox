@@ -1035,7 +1035,7 @@ tr.editing td {
             <div class="table-wrap">
                 <table class="data" id="empTable">
                     <thead>
-                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>RV</th><th>Pauschale</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
+                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>RV</th><th>Beschäftigungsart</th><th>Pauschale</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
                     </thead>
                     <tbody></tbody>
                 </table>
@@ -1069,6 +1069,13 @@ tr.editing td {
                     <span>Von der Rentenversicherungspflicht befreit
                         <small class="hint">(sonst wird der RV-Anteil vom Lohn abgezogen). Gilt ab dem laufenden Monat; ein späterer Wechsel wird über &bdquo;RV-Status ändern&ldquo; datiert.</small>
                     </span>
+                </label>
+                <label>Beschäftigungsart
+                    <select id="empBeschaeftigungsart">
+                        <option value="minijob">Minijob (§8 Abs. 1 Nr. 1 SGB IV)</option>
+                        <option value="kurzfristig">Kurzfristige Beschäftigung (§8 Abs. 1 Nr. 2 SGB IV)</option>
+                    </select>
+                    <small class="hint">Bei kurzfristiger Beschäftigung berechnet die App keine SV-Beiträge/Pauschalabgaben und keine Minijob-Grenze. Gilt ab dem laufenden Monat; ein späterer Wechsel wird über &bdquo;Beschäftigungsart ändern&ldquo; datiert.</small>
                 </label>
                 <label>Monatspauschale (EUR)
                     <input type="number" step="0.01" min="0" id="empPauschale" value="0">
@@ -1556,6 +1563,8 @@ window.ParaloxConfig = {
                 isActive: true,
                 rvBefreit: false,
                 rvHistorie: [],
+                beschaeftigungsart: 'minijob',
+                beschaeftigungsartHistorie: [],
                 assignedTo: 'owner1',
                 monatspauschale: 0,
                 pauschaleAb: '',
@@ -1867,6 +1876,40 @@ window.ParaloxConfig = {
             if (typeof e.pauschaleAb !== 'string' || !/^\d{4}-\d{2}$/.test(e.pauschaleAb)) {
                 e.pauschaleAb = e.monatspauschale > 0 ? '2026-06' : '';
             }
+            // Migration: Beschäftigungsart (Minijob / kurzfristige Beschäftigung
+            // nach §8 Abs. 1 Nr. 2 SGB IV), datiert wie die RV-Historie — ein
+            // Wechsel (z. B. ein wiederkehrender Mitarbeiter, der zuerst Minijob
+            // war und später nur noch kurzfristig aushilft) darf die Abrechnung
+            // vergangener Monate nicht nachträglich verändern. Default und
+            // einziger bisheriger Fall ist 'minijob' — die App kannte bis jetzt
+            // keine andere Beschäftigungsart.
+            if (e.beschaeftigungsart !== 'minijob' && e.beschaeftigungsart !== 'kurzfristig') {
+                e.beschaeftigungsart = 'minijob';
+            }
+            if (!Array.isArray(e.beschaeftigungsartHistorie) || e.beschaeftigungsartHistorie.length === 0) {
+                e.beschaeftigungsartHistorie = [{
+                    gueltigAb: oldestMonthByEmp[e.id] || todayISOMonth(),
+                    typ: e.beschaeftigungsart,
+                }];
+            }
+            const baByMonth = {};
+            e.beschaeftigungsartHistorie.forEach(h => {
+                if (h && typeof h.gueltigAb === 'string' && /^\d{4}-\d{2}$/.test(h.gueltigAb) &&
+                    (h.typ === 'minijob' || h.typ === 'kurzfristig')) {
+                    baByMonth[h.gueltigAb] = { gueltigAb: h.gueltigAb, typ: h.typ };
+                }
+            });
+            e.beschaeftigungsartHistorie = Object.values(baByMonth)
+                .sort((a, b) => a.gueltigAb.localeCompare(b.gueltigAb));
+            if (e.beschaeftigungsartHistorie.length === 0) {
+                e.beschaeftigungsartHistorie = [{
+                    gueltigAb: oldestMonthByEmp[e.id] || todayISOMonth(),
+                    typ: e.beschaeftigungsart,
+                }];
+            }
+            // Spiegel des jüngsten Eintrags — analog rvBefreit. Reine Anzeige;
+            // für jede Berechnung ist die Historie maßgeblich.
+            e.beschaeftigungsart = e.beschaeftigungsartHistorie[e.beschaeftigungsartHistorie.length - 1].typ;
         });
         return data;
     }
@@ -2394,6 +2437,19 @@ window.ParaloxConfig = {
      * § 1 Abs. 1 Nr. 6 SvEV). Der Betrag wird ausgezahlt, bleibt aber außen vor
      * bei Brutto, Minijob-Grenze, RV-Bemessung und Pauschalabgaben. */
     const isBeitragsfrei = s => isSonderzahlung(s) && !!s.beitragsfrei;
+
+    /* Kein beitragspflichtiges Arbeitsentgelt im Sinne der Minijob-Pauschal-
+     * abgaben: entweder eine beitragsfrei gestellte Sonderzahlung (s.o.) oder
+     * — unabhängig vom Eintragstyp — jeder Eintrag eines Mitarbeiters, der in
+     * diesem Monat kurzfristig beschäftigt ist (§8 Abs. 1 Nr. 2 SGB IV). Für
+     * kurzfristige Beschäftigung fallen keine Pauschalabgaben an die Minijob-
+     * Zentrale an — weder auf Schichten noch auf Urlaubsentgelt oder
+     * Monatspauschale. isKurzfristigForMonth ist weiter unten definiert
+     * (function-Deklaration, daher hier schon aufrufbar). */
+    function isAbgabenfrei(shift) {
+        return isBeitragsfrei(shift) ||
+            isKurzfristigForMonth(shift.employeeId, (shift.date || '').slice(0, 7));
+    }
 
     /* Wer die Kosten eines zeitlosen Eintrags trägt.
      *
@@ -3021,7 +3077,12 @@ window.ParaloxConfig = {
 
     function splitCost(shift) {
         const { amount } = wageFor(shift);
-        const factorV = ABGABEN_PCT / 100;
+        /* Kurzfristig Beschäftigte (und beitragsfreie Sonderzahlungen) lösen
+         * KEINE Pauschalabgaben an die Minijob-Zentrale aus — unabhängig vom
+         * Eintragstyp. isAbgabenfrei() entscheidet das pro Eintrag anhand der
+         * Beschäftigungsart im Monat dieses Eintrags. */
+        const frei = isAbgabenfrei(shift);
+        const factorV = frei ? 0 : ABGABEN_PCT / 100;
         /* Urlaubstage hängen an keinem Raum, also greift die Raum-Aufteilung
          * nicht. Sie werden 50/50 auf die Eigentümer verteilt — dieselbe Regel
          * wie bei der Monatspauschale, die ebenfalls raumlos ist. */
@@ -3035,13 +3096,10 @@ window.ParaloxConfig = {
             if (traeger === 'owner1') { base1 = amount; base2 = 0; }
             else if (traeger === 'owner2') { base1 = 0; base2 = amount; }
             else { base1 = amount / 2; base2 = amount / 2; }
-            /* Auf beitragsfreie Sonderzahlungen fallen KEINE Pauschalabgaben an
-             * — die 31,17 % bemessen sich am beitragspflichtigen Arbeitsentgelt,
-             * und genau das ist der Betrag nicht. */
-            const f = isBeitragsfrei(shift) ? 0 : factorV;
+            const f = factorV;
             return {
                 total: amount,
-                abgabenPct: isBeitragsfrei(shift) ? 0 : ABGABEN_PCT,
+                abgabenPct: frei ? 0 : ABGABEN_PCT,
                 owner1: base1, owner2: base2,
                 owner1Base: base1, owner2Base: base2,
                 owner1Abgaben: base1 * f, owner2Abgaben: base2 * f,
@@ -3051,7 +3109,7 @@ window.ParaloxConfig = {
         const rooms = settings().rooms || {};
         const fallback = { owner1: 50, owner2: 50 };
         const r1 = rooms[shift.room] || fallback;
-        const factor = ABGABEN_PCT / 100;
+        const factor = factorV;
 
         let base1, base2;
         if (!shift.isDouble) {
@@ -3067,7 +3125,7 @@ window.ParaloxConfig = {
         const abg2 = base2 * factor;
         return {
             total: amount,
-            abgabenPct: ABGABEN_PCT,
+            abgabenPct: frei ? 0 : ABGABEN_PCT,
             owner1: base1,
             owner2: base2,
             owner1Base: base1,
@@ -4124,11 +4182,35 @@ window.ParaloxConfig = {
     }
 
     function renderLimits() {
-        const list = mineShifts();
         const now = new Date();
         const year = now.getFullYear();
         const monthKey = `${year}-${pad(now.getMonth() + 1)}`;
         const myId = state.user?.id;
+        /* Die Minijob-Jahres-/Monatsgrenze gilt nicht für kurzfristig
+         * Beschäftigte (§8 Abs. 1 Nr. 2 SGB IV) — für sie ist stattdessen die
+         * 70-Arbeitstage- bzw. 3-Monats-Grenze maßgeblich (je nach Anzahl der
+         * Arbeitstage pro Woche), kalenderjahresübergreifend über ALLE
+         * Arbeitgeber. Die App kann diesen Wert nicht verbindlich prüfen (sie
+         * kennt weder andere Arbeitgeber noch, welcher der beiden Tests
+         * greift) — gezeigt wird daher nur zur Orientierung die Zahl der hier
+         * erfassten Arbeitstage im Kalenderjahr, kein Ampel-Status. */
+        if (myId && isKurzfristigForMonth(myId, monthKey)) {
+            const arbeitstage = urlaubsJahr(myId, year).arbeitstage;
+            $('#mineLimits').innerHTML = `
+                <div class="limit-card">
+                    <div class="limit-header">
+                        <span class="limit-label">Kurzfristige Beschäftigung ${year}</span>
+                        <span class="limit-value">${arbeitstage} Arbeitstage</span>
+                    </div>
+                    <div class="limit-info">Keine Minijob-Grenze. Maßgeblich ist die 70-Tage- bzw.
+                        3-Monats-Grenze (§8 Abs. 1 Nr. 2 SGB IV) über alle Arbeitgeber im
+                        Kalenderjahr — hier gezeigt wird nur die Zahl der bei Paralox
+                        erfassten Arbeitstage, keine verbindliche Prüfung.</div>
+                </div>
+            `;
+            return;
+        }
+        const list = mineShifts();
         let yearAmt = 0, monthAmt = 0;
         // Monate des laufenden Jahres mit ≥1 Schicht sammeln — nur dort besteht
         // ein Pauschalenanspruch (analog Admin/„Meine Stunden": keine Pauschale
@@ -4411,6 +4493,12 @@ window.ParaloxConfig = {
      * Migrationseintrag mal gelöscht würde). Monatsgenau, weil die RV in
      * Beitragsmonaten rechnet — auch die 175-EUR-Schwelle ist eine Monatsgrenze. */
     function rvBefreitForMonth(empId, month) {
+        /* Kurzfristig Beschäftigte (§8 Abs. 1 Nr. 2 SGB IV) unterliegen in
+         * KEINEM Monat der Rentenversicherungspflicht — unabhängig von einer
+         * eigenen RV-Historie, die nur innerhalb von Minijob-Monaten eine
+         * Rolle spielt (ein Mitarbeiter kann zwischen beiden Beschäftigungs-
+         * arten wechseln, siehe beschaeftigungsartForMonth). */
+        if (isKurzfristigForMonth(empId, month)) return true;
         const hist = rvHistorieFor(empId);
         if (hist.length === 0) return empRvBefreit(empId);
         let chosen = hist[0];
@@ -4419,6 +4507,55 @@ window.ParaloxConfig = {
             else break;
         }
         return !!chosen.befreit;
+    }
+
+    /* Beschäftigungsart eines Mitarbeiters (Spiegel des jüngsten Historien-
+     * Eintrags) — nur für die Anzeige gedacht, analog empRvBefreit. Für JEDE
+     * Berechnung ist beschaeftigungsartForMonth zu verwenden. */
+    function empBeschaeftigungsart(id) {
+        const e = employees().find(x => x.id === id);
+        return (e && e.beschaeftigungsart) || 'minijob';
+    }
+
+    /* Datierte Beschäftigungsart-Historie eines Mitarbeiters, analog
+     * rvHistorieFor. */
+    function beschaeftigungsartHistorieFor(empId) {
+        const e = employees().find(x => x.id === empId);
+        return Array.isArray(e?.beschaeftigungsartHistorie) ? e.beschaeftigungsartHistorie : [];
+    }
+
+    /* Beschäftigungsart, die in einem bestimmten MONAT (YYYY-MM) galt, analog
+     * rvBefreitForMonth — maßgeblich für jede Berechnung, damit ein späterer
+     * Wechsel (z. B. ein Mitarbeiter, der zuerst Minijob war und später nur
+     * noch kurzfristig aushilft) die Abrechnung vergangener Monate nicht
+     * nachträglich verändert. */
+    function beschaeftigungsartForMonth(empId, month) {
+        const hist = beschaeftigungsartHistorieFor(empId);
+        if (hist.length === 0) return empBeschaeftigungsart(empId);
+        let chosen = hist[0];
+        for (const h of hist) {
+            if (h.gueltigAb <= month) chosen = h;
+            else break;
+        }
+        return chosen.typ;
+    }
+
+    function isKurzfristigForMonth(empId, month) {
+        return beschaeftigungsartForMonth(empId, month) === 'kurzfristig';
+    }
+
+    /* Trägt einen Beschäftigungsart-Wechsel in die Historie eines Mitarbeiters
+     * ein, analog setRvEintrag: dedupliziert nach Stichtag (neuer Eintrag
+     * gewinnt), sortiert chronologisch und spiegelt beschaeftigungsart auf den
+     * jüngsten Eintrag. */
+    function setBeschaeftigungsartEintrag(emp, gueltigAb, typ) {
+        const hist = Array.isArray(emp.beschaeftigungsartHistorie) ? emp.beschaeftigungsartHistorie : [];
+        const merged = [
+            ...hist.filter(h => h.gueltigAb !== gueltigAb),
+            { gueltigAb, typ },
+        ].sort((a, b) => a.gueltigAb.localeCompare(b.gueltigAb));
+        emp.beschaeftigungsartHistorie = merged;
+        emp.beschaeftigungsart = merged[merged.length - 1].typ;
     }
 
     /* Trägt einen RV-Statuswechsel in die Historie eines Mitarbeiters ein:
@@ -4786,10 +4923,18 @@ window.ParaloxConfig = {
             empMonthsMap.get(s.employeeId).add(month);
         });
         let pauschaleSum = 0;
+        // Pauschalen-Anteil kurzfristig Beschäftigter — fließt zwar ins
+        // Brutto, aber (wie ihre Schichten) nicht in die Abgaben-
+        // Bemessungsgrundlage an die Minijob-Zentrale.
+        let pauschaleSumAbgabenfrei = 0;
         empMonthsMap.forEach((months, empId) => {
             // Pro Monat einzeln, damit der Stichtag (pauschaleAb) greift und
             // Monate vor dem Stichtag keine Pauschale beitragen.
-            months.forEach(month => { pauschaleSum += monatspauschaleForMonth(empId, month); });
+            months.forEach(month => {
+                const p = monatspauschaleForMonth(empId, month);
+                pauschaleSum += p;
+                if (isKurzfristigForMonth(empId, month)) pauschaleSumAbgabenfrei += p;
+            });
         });
         // Pauschale ebenfalls stichtaggerecht auf Cent: Hälfte von Eigentümer 1 gerundet,
         // Eigentümer 2 als Rest zum gerundeten Gesamt — so gilt auch inkl. Pauschale
@@ -4797,18 +4942,22 @@ window.ParaloxConfig = {
         const pauschaleAmtDisp = hasV2 ? roundHalfUp(pauschaleSum)     : pauschaleSum;
         const pauschaleSDisp   = hasV2 ? roundHalfUp(pauschaleSum / 2) : pauschaleSum / 2;
         const pauschaleBDisp   = pauschaleAmtDisp - pauschaleSDisp;
+        const pauschaleFreiAmtDisp = hasV2 ? roundHalfUp(pauschaleSumAbgabenfrei)     : pauschaleSumAbgabenfrei;
+        const pauschaleFreiSDisp   = hasV2 ? roundHalfUp(pauschaleSumAbgabenfrei / 2) : pauschaleSumAbgabenfrei / 2;
+        const pauschaleFreiBDisp   = pauschaleFreiAmtDisp - pauschaleFreiSDisp;
         // Gesamtwerte. Ab Stichtag alles aus den (cent-gerundeten) Anzeigebeträgen:
         // Abgaben = 31,17 % der Kosten, Gesamt = Kosten + Abgaben — die Zusammen-
         // fassung ist in sich stimmig und Eigentümer 1 + Eigentümer 2 = Verdienst. Davor die
         // alte Rechnung (Rohsummen, Rundung erst in der Anzeige) — unverändert.
         const agg = { sBase: sSum + pauschaleSDisp, bBase: bSum + pauschaleBDisp };
-        /* Beitragsfreie Sonderzahlungen stecken in sBase/bBase (sie sind echte
-         * Kosten), tragen aber keine Pauschalabgaben. Die Abgaben-Grundlage ist
-         * deshalb um ihre Hälften vermindert — sonst berechnete die Zusammen-
-         * fassung 31,17 % auf einen Betrag, für den sie nicht anfallen. */
-        let frei1 = 0, frei2 = 0;
+        /* Beitragsfreie Sonderzahlungen UND Einträge kurzfristig Beschäftigter
+         * stecken in sBase/bBase (sie sind echte Kosten), tragen aber keine
+         * Pauschalabgaben. Die Abgaben-Grundlage ist deshalb um ihre Anteile
+         * vermindert — sonst berechnete die Zusammenfassung 31,17 % auf einen
+         * Betrag, für den sie nicht anfallen. */
+        let frei1 = pauschaleFreiSDisp, frei2 = pauschaleFreiBDisp;
         list.forEach((s, i) => {
-            if (!isBeitragsfrei(s)) return;
+            if (!isAbgabenfrei(s)) return;
             frei1 += shows[i].owner1;
             frei2 += shows[i].owner2;
         });
@@ -5071,6 +5220,10 @@ window.ParaloxConfig = {
         const empIds = [...new Set(list.map(s => s.employeeId))];
         const byEmp = new Map();
         let pauschaleSum = 0;
+        // Pauschalen-Anteil kurzfristig Beschäftigter — wie beim Shift-Anteil
+        // unten (isAbgabenfrei) fließt er zwar ins Brutto, aber nicht in die
+        // Abgaben-Bemessungsgrundlage an die Minijob-Zentrale.
+        let pauschaleSumAbgabenfrei = 0;
         empIds.forEach(empId => {
             const empShifts = list.filter(s => s.employeeId === empId);
             const p = payoutInfoForShifts(empShifts, empId);
@@ -5078,10 +5231,18 @@ window.ParaloxConfig = {
             // ist das false und der tatsächliche RV-Anteil steht in p.rvAnteil.
             byEmp.set(empId, { ...p, befreit: p.alleBefreit });
             pauschaleSum += p.pauschaleTotal;
+            const pauschalMonate = new Set(
+                empShifts.filter(zaehltFuerPauschale).map(s => (s.date || '').slice(0, 7)));
+            pauschalMonate.forEach(month => {
+                if (isKurzfristigForMonth(empId, month)) {
+                    pauschaleSumAbgabenfrei += monatspauschaleForMonth(empId, month);
+                }
+            });
         });
         // Monatspauschalen erhöhen Brutto und werden 50/50 zwischen Eigentümer 1 und
         // Eigentümer 2 aufgeteilt (NICHT raumbasiert). Die Pauschalabgaben (31,17 %)
-        // fallen darauf wie auf jedes andere Brutto an.
+        // fallen darauf wie auf jedes andere Brutto an — außer bei kurzfristig
+        // Beschäftigten (siehe pauschaleSumAbgabenfrei).
         const factor = ABGABEN_PCT / 100;
         // Pauschale stichtaggerecht 50/50 (Hälfte von Eigentümer 1 gerundet, Eigentümer 2 als
         // Rest). Ab Stichtag Kosten/Abgaben/Gesamt aus den (cent-gerundeten)
@@ -5090,16 +5251,35 @@ window.ParaloxConfig = {
         const pauschaleAmtDisp = hasV2 ? roundHalfUp(pauschaleSum)     : pauschaleSum;
         const pauschaleSDisp   = hasV2 ? roundHalfUp(pauschaleSum / 2) : pauschaleSum / 2;
         const pauschaleBDisp   = pauschaleAmtDisp - pauschaleSDisp;
+        const pauschaleFreiAmtDisp = hasV2 ? roundHalfUp(pauschaleSumAbgabenfrei)     : pauschaleSumAbgabenfrei;
+        const pauschaleFreiSDisp   = hasV2 ? roundHalfUp(pauschaleSumAbgabenfrei / 2) : pauschaleSumAbgabenfrei / 2;
+        const pauschaleFreiBDisp   = pauschaleFreiAmtDisp - pauschaleFreiSDisp;
         const sBase = tot.sBase + pauschaleSDisp;
         const bBase = tot.bBase + pauschaleBDisp;
         const bruttoGesamt = tot.amt + pauschaleAmtDisp;
+        /* Schicht-Anteil kurzfristig Beschäftigter aus der Abgaben-Bemessungs-
+         * grundlage herausnehmen — wie bei renderAdminShifts, aber bewusst nur
+         * für kurzfristig (nicht über isAbgabenfrei/isBeitragsfrei), damit sich
+         * an der bisherigen Behandlung beitragsfreier Sonderzahlungen in diesem
+         * Export nichts ändert. */
+        let kurzfrei1 = pauschaleFreiSDisp, kurzfrei2 = pauschaleFreiBDisp;
+        list.forEach((s, i) => {
+            if (!isKurzfristigForMonth(s.employeeId, (s.date || '').slice(0, 7))) return;
+            kurzfrei1 += shows[i].owner1;
+            kurzfrei2 += shows[i].owner2;
+        });
+        const abgBaseS = sBase - kurzfrei1;
+        const abgBaseB = bBase - kurzfrei2;
         let sAbg, sTot, bAbg, bTot;
         if (hasV2) {
-            sAbg = roundHalfUp(sBase * factor); sTot = sBase + sAbg;
-            bAbg = roundHalfUp(bBase * factor); bTot = bBase + bAbg;
-        } else {
+            sAbg = roundHalfUp(abgBaseS * factor); sTot = sBase + sAbg;
+            bAbg = roundHalfUp(abgBaseB * factor); bTot = bBase + bAbg;
+        } else if (kurzfrei1 === 0 && kurzfrei2 === 0) {
             sAbg = sBase * factor; sTot = sBase * (1 + factor);
             bAbg = bBase * factor; bTot = bBase * (1 + factor);
+        } else {
+            sAbg = abgBaseS * factor; sTot = sBase + sAbg;
+            bAbg = abgBaseB * factor; bTot = bBase + bAbg;
         }
         rows.push([]);
         rows.push(['ZUSAMMENFASSUNG']);
@@ -5365,9 +5545,14 @@ window.ParaloxConfig = {
             if (idx > 0) doc.addPage();
             const { emp, list } = entry;
             const arbeitgeber = ownerLabel(emp.assignedTo);
+            // Titel richtet sich nach der Beschäftigungsart in GENAU diesem
+            // Monat (nicht nach dem aktuellen Status) — dieselbe Monatslogik
+            // wie beim RV-Status weiter unten.
+            const pdfMonthForTitle = month || (list[0]?.date || '').slice(0, 7);
+            const istKurzfristig = isKurzfristigForMonth(emp.id, pdfMonthForTitle);
 
             doc.setFontSize(16); doc.setTextColor(0);
-            doc.text('Stundenliste Minijob', 40, 50);
+            doc.text(istKurzfristig ? 'Stundenliste Kurzfristige Beschäftigung' : 'Stundenliste Minijob', 40, 50);
             doc.setFontSize(11); doc.setTextColor(80);
             doc.text(`Mitarbeiter:  ${emp.name}`, 40, 78);
             doc.text(`Zeitraum:     ${monthLabel}`, 40, 94);
@@ -5645,6 +5830,17 @@ window.ParaloxConfig = {
                 ? '<span class="badge muted" title="Befreit — kein RV-Anteil-Abzug">RV-befreit</span>'
                 : '<span class="badge" title="RV-pflichtig — AN-Anteil wird vom Lohn abgezogen">RV-pflichtig</span>'
             ) + rvAbHint;
+            // Beschäftigungsart-Badge, analog zum RV-Badge: zeigt den AKTUELLEN
+            // Status, Stichtag nur bei einem tatsächlichen Wechsel.
+            const baHist = Array.isArray(e.beschaeftigungsartHistorie) ? e.beschaeftigungsartHistorie : [];
+            const baLatest = baHist.length ? baHist[baHist.length - 1] : null;
+            const baAbHint = baHist.length > 1 && baLatest
+                ? ` <span class="muted small">ab ${escapeHtml(baLatest.gueltigAb)}</span>`
+                : '';
+            const baBadge = (e.beschaeftigungsart === 'kurzfristig'
+                ? '<span class="badge" title="Kurzfristige Beschäftigung (§8 Abs. 1 Nr. 2 SGB IV) — keine SV-Beiträge, keine Minijob-Grenze, Lohnsteuer separat über ELSTER">Kurzfristig</span>'
+                : '<span class="badge muted" title="Minijob (§8 Abs. 1 Nr. 1 SGB IV) — pauschale Abgaben über die Minijob-Zentrale">Minijob</span>'
+            ) + baAbHint;
             const pauschaleVal = Number(e.monatspauschale) || 0;
             const pauschaleAbVal = (typeof e.pauschaleAb === 'string' && /^\d{4}-\d{2}$/.test(e.pauschaleAb)) ? e.pauschaleAb : '';
             const pauschaleCell = pauschaleVal > 0
@@ -5656,6 +5852,7 @@ window.ParaloxConfig = {
                 <td>${roleBadge}</td>
                 <td><span class="badge">${escapeHtml(arbeitgeberLabel)}</span></td>
                 <td>${rvBadge}</td>
+                <td>${baBadge}</td>
                 <td>${pauschaleCell}</td>
                 <td>${e.isActive ? '<span class="badge ok">Aktiv</span>' : '<span class="badge muted">Inaktiv</span>'}</td>
                 <td class="muted small">${e.createdAt ? fmtDateDE(e.createdAt.slice(0, 10)) : ''}</td>
@@ -5669,6 +5866,7 @@ window.ParaloxConfig = {
                     <button class="btn small" data-emp-admin="${e.id}">${e.isAdmin ? 'Admin entziehen' : 'Admin geben'}</button>
                     <button class="btn small" data-emp-acc="${e.id}">${e.isAccountant ? 'Buchhaltung entziehen' : 'Buchhaltung geben'}</button>
                     <button class="btn small" data-emp-rv="${e.id}">RV-Status ändern</button>
+                    <button class="btn small" data-emp-ba="${e.id}">Beschäftigungsart ändern</button>
                     <button class="btn small ${e.isActive ? 'danger' : ''}" data-emp-active="${e.id}">${e.isActive ? 'Deaktivieren' : 'Aktivieren'}</button>
                     <button class="btn small danger" data-emp-delete="${e.id}" title="Löscht den Mitarbeiter dauerhaft. Nur möglich, wenn keine Schichten im laufenden Monat existieren.">Löschen</button>
                 ` : '<span class="muted small">–</span>'}</td>
@@ -5771,6 +5969,41 @@ window.ParaloxConfig = {
             saveData();
             renderEmployees();
             toast(`Ab ${ab}: ${befreit ? 'RV-befreit' : 'RV-pflichtig'}`, 'success');
+        });
+        tbody.querySelectorAll('[data-emp-ba]').forEach(b => b.onclick = async () => {
+            const emp = employees().find(x => x.id === Number(b.dataset.empBa));
+            const hist = Array.isArray(emp.beschaeftigungsartHistorie) ? emp.beschaeftigungsartHistorie : [];
+            const histTxt = hist
+                .map(h => `${h.gueltigAb}: ${h.typ === 'kurzfristig' ? 'kurzfristig' : 'Minijob'}`)
+                .join(' · ');
+            const r = await promptModal(`Beschäftigungsart ändern — ${emp.name}`, [
+                {
+                    key: 'typ',
+                    label: `Neue Beschäftigungsart${histTxt ? ` (bisher — ${histTxt})` : ''}`,
+                    options: [
+                        { value: 'minijob',     label: 'Minijob (§8 Abs. 1 Nr. 1 SGB IV)' },
+                        { value: 'kurzfristig', label: 'Kurzfristige Beschäftigung (§8 Abs. 1 Nr. 2 SGB IV)' },
+                    ],
+                    value: emp.beschaeftigungsart === 'kurzfristig' ? 'kurzfristig' : 'minijob',
+                },
+                {
+                    key: 'ab',
+                    label: 'Gilt ab Monat (frühere Monate bleiben unverändert)',
+                    type: 'month',
+                    value: todayLocalISO().slice(0, 7),
+                },
+            ]);
+            if (!r) return;
+            const ab = String(r.ab || '').trim();
+            if (!/^\d{4}-\d{2}$/.test(ab)) {
+                toast('Bitte einen Stichtags-Monat angeben (Format YYYY-MM).', 'error');
+                return;
+            }
+            const typ = r.typ === 'kurzfristig' ? 'kurzfristig' : 'minijob';
+            setBeschaeftigungsartEintrag(emp, ab, typ);
+            saveData();
+            renderEmployees();
+            toast(`Ab ${ab}: ${typ === 'kurzfristig' ? 'Kurzfristige Beschäftigung' : 'Minijob'}`, 'success');
         });
         tbody.querySelectorAll('[data-emp-urlaub]').forEach(b => b.onclick = () => {
             openUrlaubModal(Number(b.dataset.empUrlaub));
@@ -5876,6 +6109,7 @@ window.ParaloxConfig = {
         // Der Anfangsstatus gilt ab dem laufenden Monat. Ein neuer Mitarbeiter hat
         // keine älteren Schichten, daher deckt dieser eine Eintrag alles ab.
         const rvBefreitInit = $('#empRvBefreit').checked;
+        const beschaeftigungsartInit = $('#empBeschaeftigungsart').value === 'kurzfristig' ? 'kurzfristig' : 'minijob';
         state.data.employees.push({
             id: window.ParaloxStorage.nextId(employees()),
             name,
@@ -5884,6 +6118,8 @@ window.ParaloxConfig = {
             isAccountant: $('#empAccountant').checked,
             rvBefreit: rvBefreitInit,
             rvHistorie: [{ gueltigAb: todayLocalISO().slice(0, 7), befreit: rvBefreitInit }],
+            beschaeftigungsart: beschaeftigungsartInit,
+            beschaeftigungsartHistorie: [{ gueltigAb: todayLocalISO().slice(0, 7), typ: beschaeftigungsartInit }],
             isActive: true,
             assignedTo: $('#empAssigned').value,
             monatspauschale: pauschale,
@@ -5896,6 +6132,7 @@ window.ParaloxConfig = {
         $('#empAdmin').checked = false;
         $('#empAccountant').checked = false;
         $('#empRvBefreit').checked = false;
+        $('#empBeschaeftigungsart').value = 'minijob';
         $('#empAssigned').value = 'owner1';
         $('#empPauschale').value = '0';
         $('#empPauschaleAb').value = '';

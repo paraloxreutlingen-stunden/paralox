@@ -202,7 +202,7 @@
             <div class="table-wrap">
                 <table class="data" id="empTable">
                     <thead>
-                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>RV</th><th>Pauschale</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
+                        <tr><th>Name</th><th>Rolle</th><th>Arbeitgeber</th><th>RV</th><th>Beschäftigungsart</th><th>Pauschale</th><th>Aktiv</th><th>Angelegt</th><th>Aktionen</th></tr>
                     </thead>
                     <tbody></tbody>
                 </table>
@@ -236,6 +236,13 @@
                     <span>Von der Rentenversicherungspflicht befreit
                         <small class="hint">(sonst wird der RV-Anteil vom Lohn abgezogen). Gilt ab dem laufenden Monat; ein späterer Wechsel wird über &bdquo;RV-Status ändern&ldquo; datiert.</small>
                     </span>
+                </label>
+                <label>Beschäftigungsart
+                    <select id="empBeschaeftigungsart">
+                        <option value="minijob">Minijob (§8 Abs. 1 Nr. 1 SGB IV)</option>
+                        <option value="kurzfristig">Kurzfristige Beschäftigung (§8 Abs. 1 Nr. 2 SGB IV)</option>
+                    </select>
+                    <small class="hint">Bei kurzfristiger Beschäftigung berechnet die App keine SV-Beiträge/Pauschalabgaben und keine Minijob-Grenze. Gilt ab dem laufenden Monat; ein späterer Wechsel wird über &bdquo;Beschäftigungsart ändern&ldquo; datiert.</small>
                 </label>
                 <label>Monatspauschale (EUR)
                     <input type="number" step="0.01" min="0" id="empPauschale" value="0">

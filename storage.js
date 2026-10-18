@@ -109,6 +109,8 @@
                 isActive: true,
                 rvBefreit: false,
                 rvHistorie: [],
+                beschaeftigungsart: 'minijob',
+                beschaeftigungsartHistorie: [],
                 assignedTo: 'owner1',
                 monatspauschale: 0,
                 pauschaleAb: '',
@@ -420,6 +422,40 @@
             if (typeof e.pauschaleAb !== 'string' || !/^\d{4}-\d{2}$/.test(e.pauschaleAb)) {
                 e.pauschaleAb = e.monatspauschale > 0 ? '2026-06' : '';
             }
+            // Migration: Beschäftigungsart (Minijob / kurzfristige Beschäftigung
+            // nach §8 Abs. 1 Nr. 2 SGB IV), datiert wie die RV-Historie — ein
+            // Wechsel (z. B. ein wiederkehrender Mitarbeiter, der zuerst Minijob
+            // war und später nur noch kurzfristig aushilft) darf die Abrechnung
+            // vergangener Monate nicht nachträglich verändern. Default und
+            // einziger bisheriger Fall ist 'minijob' — die App kannte bis jetzt
+            // keine andere Beschäftigungsart.
+            if (e.beschaeftigungsart !== 'minijob' && e.beschaeftigungsart !== 'kurzfristig') {
+                e.beschaeftigungsart = 'minijob';
+            }
+            if (!Array.isArray(e.beschaeftigungsartHistorie) || e.beschaeftigungsartHistorie.length === 0) {
+                e.beschaeftigungsartHistorie = [{
+                    gueltigAb: oldestMonthByEmp[e.id] || todayISOMonth(),
+                    typ: e.beschaeftigungsart,
+                }];
+            }
+            const baByMonth = {};
+            e.beschaeftigungsartHistorie.forEach(h => {
+                if (h && typeof h.gueltigAb === 'string' && /^\d{4}-\d{2}$/.test(h.gueltigAb) &&
+                    (h.typ === 'minijob' || h.typ === 'kurzfristig')) {
+                    baByMonth[h.gueltigAb] = { gueltigAb: h.gueltigAb, typ: h.typ };
+                }
+            });
+            e.beschaeftigungsartHistorie = Object.values(baByMonth)
+                .sort((a, b) => a.gueltigAb.localeCompare(b.gueltigAb));
+            if (e.beschaeftigungsartHistorie.length === 0) {
+                e.beschaeftigungsartHistorie = [{
+                    gueltigAb: oldestMonthByEmp[e.id] || todayISOMonth(),
+                    typ: e.beschaeftigungsart,
+                }];
+            }
+            // Spiegel des jüngsten Eintrags — analog rvBefreit. Reine Anzeige;
+            // für jede Berechnung ist die Historie maßgeblich.
+            e.beschaeftigungsart = e.beschaeftigungsartHistorie[e.beschaeftigungsartHistorie.length - 1].typ;
         });
         return data;
     }
