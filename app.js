@@ -1320,9 +1320,14 @@
     }
 
     // Zusätzliche Regeln, die nur für Nicht-Admins gelten
-    function validateNonAdminConstraints(p) {
+    /* allowPast: beim Beenden einer selbst gestarteten Schicht. Gestartet
+     * werden kann nur am heutigen Tag, das Datum ist also echt und nicht
+     * nachträglich ausgedacht — wer vergessen hat zu beenden, soll das am
+     * nächsten Tag selbst nachholen können. Frei in die Vergangenheit
+     * nachtragen bleibt Admin-Sache. */
+    function validateNonAdminConstraints(p, { allowPast = false } = {}) {
         const today = todayISO();
-        if (p.date < today) {
+        if (p.date < today && !allowPast) {
             return 'Schichten in der Vergangenheit können nur vom Admin erfasst werden.';
         }
         if (p.date > today) {
@@ -1626,20 +1631,18 @@
             // Beginn/Datum/Raum read-only. Doppelüberwachung darf der Mitarbeiter
             // beim Beenden noch ändern (zweiter Raum kann später dazugekommen sein).
             const roomLabel = (settings().rooms?.[open.room]?.name) || open.room;
-            // Eine vergessene Schicht von einem früheren Tag kann ein Mitarbeiter
-            // nicht selbst beenden (Vergangenheit ist Admin-Sache). Ohne eigenen
-            // Ausweg säße er dauerhaft im Beenden-Modus fest und könnte keine
-            // neue Schicht mehr erfassen — deshalb bleibt ihm nur das Verwerfen,
-            // und der Admin trägt die Schicht mit den Angaben aus dem Banner nach.
-            const stale = !isAdmin() && open.date < todayISO();
+            // Eine vergessene Schicht von einem früheren Tag bekommt einen
+            // eigenen Hinweis: "läuft seit" wäre irreführend, und die Endezeit
+            // bezieht sich auf den Starttag, nicht auf heute.
+            const stale = open.date < todayISO();
             const startInfo =
                 `${escapeHtml(fmtDateDE(open.date))} um ${escapeHtml(open.startTime)} ` +
                 `in Raum <strong>${escapeHtml(roomLabel)}</strong>`;
             banner.innerHTML = stale
                 ? '<strong>⚠️ Nicht beendete Schicht</strong> vom ' + startInfo + '.' +
-                  '<div class="running-meta">Schichten aus der Vergangenheit kann nur der Admin ' +
-                  'nachtragen. Notiere dir Datum, Beginn und Raum, gib dem Admin Bescheid ' +
-                  'und tippe dann „Offene Schicht verwerfen", um wieder neue Schichten zu erfassen.</div>'
+                  `<div class="running-meta">Trage unten die Endezeit vom ${escapeHtml(fmtDateDE(open.date))} ` +
+                  'ein und tippe „Schicht beenden". Falls die Schicht nicht stattgefunden hat: ' +
+                  '„Offene Schicht verwerfen".</div>'
                 : '<strong>🟢 Deine Schicht läuft</strong> seit ' + startInfo + '.' +
                   `<div class="running-meta">Gestartet ${fmtDateTimeDE(open.startedAt)}. ` +
                   'Trage unten die Endezeit ein und tippe „Schicht beenden".</div>';
@@ -1661,8 +1664,7 @@
             empWrap.classList.add('hidden');
             startBtn.classList.add('hidden');
             saveBtn.classList.add('hidden');
-            endBtn.classList.toggle('hidden', stale);
-            endIn.required = !stale;
+            endBtn.classList.remove('hidden');
             discardBtn.classList.remove('hidden');
 
             indicator.textContent = `Schicht läuft seit ${open.startTime}`;
@@ -2003,7 +2005,7 @@
         const err = validateShiftPayload(payload);
         if (err) { toast(err, 'error'); return; }
         if (!isAdmin()) {
-            const ne = validateNonAdminConstraints(payload);
+            const ne = validateNonAdminConstraints(payload, { allowPast: true });
             if (ne) { toast(ne, 'error'); return; }
         }
         const overlap = findOverlap(shifts(), payload);
@@ -2046,10 +2048,9 @@
 
     /* "Offene Schicht verwerfen" — löscht nur den gerätelokalen Running-Marker.
      * In der Datenbank steht zu diesem Zeitpunkt noch nichts, es geht also
-     * keine erfasste Schicht verloren. Gebraucht wird das vor allem für
-     * vergessene Schichten von früheren Tagen, die der Mitarbeiter selbst
-     * nicht mehr beenden darf; aber auch ein versehentlicher Start lässt
-     * sich so zurücknehmen. */
+     * keine erfasste Schicht verloren. Gebraucht wird das für versehentlich
+     * gestartete oder nicht stattgefundene Schichten — ohne diesen Ausweg
+     * säße der Mitarbeiter im Beenden-Modus fest. */
     $('#sfDiscardBtn').addEventListener('click', async () => {
         if (!state.user) return;
         const open = window.ParaloxStorage.getRunningShift(state.user.id);
@@ -2057,7 +2058,7 @@
         const ok = await confirmModal('Offene Schicht verwerfen?',
             `<p>Die offene Schicht vom ${escapeHtml(fmtDateDE(open.date))} ab ` +
             `${escapeHtml(open.startTime)} wird verworfen und nicht gespeichert.</p>` +
-            '<p class="muted small">Soll sie abgerechnet werden, muss der Admin sie nachtragen.</p>');
+            '<p class="muted small">Zum Abrechnen stattdessen die Endezeit eintragen und „Schicht beenden" tippen.</p>');
         if (!ok) return;
         window.ParaloxStorage.clearRunningShift(state.user.id);
         dropShiftDraft();

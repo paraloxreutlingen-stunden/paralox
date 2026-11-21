@@ -1,14 +1,14 @@
 /* Test: vergessene offene Schicht von einem früheren Tag.
  *
  * Ein Mitarbeiter startet eine Schicht und beendet sie nicht. Am nächsten
- * Tag darf er sie nicht mehr selbst beenden (Vergangenheit ist Admin-Sache),
- * und solange sie offen ist, kann er auch keine neue Schicht erfassen. Ohne
- * Ausweg säße er dauerhaft fest. Geprüft wird:
+ * Tag soll er sie selbst beenden können — frei in die Vergangenheit
+ * nachtragen darf aber weiterhin nur der Admin. Geprüft wird:
  *
- *  - Banner kennzeichnet die Schicht als nicht beendet, "Beenden" ist weg
- *  - "Offene Schicht verwerfen" ist da und löscht nur den Running-Marker
- *  - danach ist das Formular wieder im Normalmodus und in shifts steht nichts
- *  - bei einer Schicht von heute bleibt "Beenden" erhalten
+ *  - Banner kennzeichnet die Schicht als nicht beendet, "Beenden" ist da
+ *  - Beenden speichert die Schicht mit dem Datum des Starttags
+ *  - "Offene Schicht verwerfen" löscht nur den Running-Marker, in shifts
+ *    steht danach nichts
+ *  - "Komplett speichern" mit Datum von gestern bleibt für Mitarbeiter gesperrt
  *
  * Läuft gegen Test-Daten, nicht gegen die produktiven Daten.
  */
@@ -90,20 +90,62 @@ const zustand = (page) => page.evaluate(() => {
         verwerfen: sichtbar('sfDiscardBtn'),
         starten: sichtbar('sfStartBtn'),
         running: JSON.parse(localStorage.getItem('paraloxStunden.runningShifts') || '{}')['2'] || null,
-        shifts: JSON.parse(localStorage.getItem('paraloxStunden.v1')).shifts.length,
+        shifts: JSON.parse(localStorage.getItem('paraloxStunden.v1')).shifts,
     };
 });
+
+const gestern = () => {
+    const t = new Date();
+    t.setDate(t.getDate() - 1);
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+};
 
 (async () => {
     const browser = await chromium.launch({ channel: 'chrome' });
 
-    console.log('Offene Schicht von gestern');
+    console.log('Offene Schicht von gestern beenden');
     let page = await openApp(browser, 1);
     let z = await zustand(page);
     check('Banner sichtbar', z.bannerSichtbar);
     check('Banner nennt nicht beendete Schicht', z.banner.includes('Nicht beendete Schicht'), z.banner.slice(0, 60));
-    check('"Schicht beenden" ausgeblendet', !z.beenden);
+    check('"Schicht beenden" sichtbar', z.beenden);
     check('"Offene Schicht verwerfen" sichtbar', z.verwerfen);
+
+    await page.fill('#sfEnd', '21:00');
+    await page.click('#sfEndBtn');
+    await page.waitForTimeout(400);
+    z = await zustand(page);
+    const s = z.shifts[0] || {};
+    check('Schicht gespeichert', z.shifts.length === 1, String(z.shifts.length));
+    check('Datum ist der Starttag', s.date === gestern(), s.date);
+    check('Beginn/Ende übernommen', s.startTime === '17:00' && s.endTime === '21:00', `${s.startTime}–${s.endTime}`);
+    check('Running-Marker gelöscht', !z.running);
+    check('Formular wieder im Normalmodus', z.starten && !z.bannerSichtbar);
+    await page.context().close();
+
+    console.log('Komplett speichern mit Datum von gestern');
+    page = await openApp(browser, 1);
+    // Offene Schicht vorher verwerfen, damit das Formular im Normalmodus ist.
+    await page.click('#sfDiscardBtn');
+    await page.waitForTimeout(200);
+    await page.click('#modalOk');
+    await page.waitForTimeout(300);
+    await page.evaluate((d) => {
+        document.getElementById('sfDate').value = d;
+        document.getElementById('sfStart').value = '10:00';
+        document.getElementById('sfEnd').value = '12:00';
+        const sel = document.getElementById('sfRoom');
+        sel.value = 'A';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }, gestern());
+    await page.click('#sfSaveBtn');
+    await page.waitForTimeout(400);
+    z = await zustand(page);
+    check('Mitarbeiter kann nicht frei in die Vergangenheit nachtragen', z.shifts.length === 0, String(z.shifts.length));
+    await page.context().close();
+
+    console.log('Offene Schicht von gestern verwerfen');
+    page = await openApp(browser, 1);
 
     // Abbrechen im Rückfrage-Dialog darf nichts verändern.
     await page.click('#sfDiscardBtn');
@@ -120,7 +162,7 @@ const zustand = (page) => page.evaluate(() => {
     z = await zustand(page);
     check('Running-Marker gelöscht', !z.running);
     check('Formular wieder im Normalmodus', z.starten && !z.verwerfen && !z.bannerSichtbar);
-    check('Keine Schicht in der Datenbank angelegt', z.shifts === 0, String(z.shifts));
+    check('Keine Schicht in der Datenbank angelegt', z.shifts.length === 0, String(z.shifts.length));
 
     await page.reload();
     await page.waitForTimeout(1000);
